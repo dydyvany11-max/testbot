@@ -1,114 +1,124 @@
--- autobot.lua
--- Autonomous test bot for your Roblox test place
--- Move -> aim at head -> shoot -> plant -> collect rewards
-
-if getgenv().TestAutoBot then
-    getgenv().TestAutoBot.Enabled = false
-    task.wait(0.2)
-end
-
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
+local PathfindingService = game:GetService("PathfindingService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 
-local LocalPlayer = Players.LocalPlayer
+local Player = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 local Bot = {
     Enabled = true,
 
-    TeamCheck = true,
+    -- поиск противников
+    MaxTargetDistance = 300,
 
-    MaxTargetDistance = 600,
-    ShootDistance = 220,
-    StopDistance = 16,
+    -- на каком расстоянии останавливаемся
+    StopDistance = 25,
 
-    MoveUpdate = 0.06,
-    FireInterval = 0.07,
+    -- дальше этого расстояния не стреляем
+    ShootDistance = 140,
 
-    Strafe = true,
-    StrafeDistance = 8,
+    -- задержка между выстрелами
+    FireDelay = 0.12,
 
-    AutoPlant = true,
-    AutoReward = true,
-    InteractionDistance = 12,
+    -- как часто ищем новую цель
+    TargetUpdate = 0.15,
 
-    Debug = true,
+    -- если противников нет, бот будет ходить вокруг
+    Wander = true,
+
+    -- насколько далеко выбираем случайную точку
+    WanderRadius = 60,
+
+    -- проверяем стены
+    VisibilityCheck = true,
 }
 
-getgenv().TestAutoBot = Bot
-
 --------------------------------------------------
--- DEBUG
+-- STATE
 --------------------------------------------------
 
-local function log(...)
-    if Bot.Debug then
-        print("[TEST BOT]", ...)
-    end
-end
+local currentTarget = nil
+local lastShot = 0
+local lastWander = 0
+local wanderPoint = nil
 
 --------------------------------------------------
 -- CHARACTER
 --------------------------------------------------
 
 local function getCharacter()
-    local char = LocalPlayer.Character
+    local character = Player.Character
 
-    if not char then
+    if not character then
         return nil
     end
 
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart")
+    local humanoid =
+        character:FindFirstChildOfClass("Humanoid")
 
-    if not humanoid or not root then
+    local root =
+        character:FindFirstChild("HumanoidRootPart")
+
+    if not humanoid
+        or not root
+        or humanoid.Health <= 0
+    then
         return nil
     end
 
-    return char, humanoid, root
+    return character, humanoid, root
 end
 
 --------------------------------------------------
--- PLAYER STATE
+-- IS ALIVE
 --------------------------------------------------
 
-local function isAlive(player)
-    local char = player.Character
-
-    if not char then
+local function isAlive(other)
+    if not other.Character then
         return false
     end
 
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
+    local humanoid =
+        other.Character:FindFirstChildOfClass("Humanoid")
 
-    if not humanoid or humanoid.Health <= 0 then
+    if not humanoid then
         return false
     end
 
-    if char:GetAttribute("Dead") == true then
+    if humanoid.Health <= 0 then
+        return false
+    end
+
+    if other.Character:GetAttribute("Dead") == true then
         return false
     end
 
     return true
 end
 
-local function isEnemy(player)
-    if player == LocalPlayer then
+--------------------------------------------------
+-- TEAM
+--------------------------------------------------
+
+local function isEnemy(other)
+    if other == Player then
         return false
     end
 
-    if not Bot.TeamCheck then
-        return true
+    if not isAlive(other) then
+        return false
     end
 
+    -- BloxStrike Deathmatch
     if Workspace:GetAttribute("Gamemode") == "Deathmatch" then
         return true
     end
 
-    local myTeam = LocalPlayer:GetAttribute("Team")
-    local theirTeam = player:GetAttribute("Team")
+    local myTeam = Player:GetAttribute("Team")
+    local theirTeam = other:GetAttribute("Team")
 
+    -- если команды неизвестны
     if myTeam == nil or theirTeam == nil then
         return true
     end
@@ -120,115 +130,137 @@ end
 -- TARGET PART
 --------------------------------------------------
 
-local function getHead(player)
-    local char = player.Character
+local function getTargetPart(other)
+    local character = other.Character
 
-    if not char then
+    if not character then
         return nil
     end
 
-    return char:FindFirstChild("Head")
-        or char:FindFirstChild("UpperTorso")
-        or char:FindFirstChild("HumanoidRootPart")
+    -- Не обязательно Head.
+    -- Ведём прицел примерно в центр тела.
+    return character:FindFirstChild("UpperTorso")
+        or character:FindFirstChild("HumanoidRootPart")
+        or character:FindFirstChild("Head")
 end
 
 --------------------------------------------------
--- VISIBILITY
+-- LINE OF SIGHT
 --------------------------------------------------
 
-local function canSee(targetCharacter, targetPart)
-    local myCharacter = LocalPlayer.Character
+local function canSee(other, part)
+    if not Bot.VisibilityCheck then
+        return true
+    end
 
-    if not myCharacter then
+    local character = Player.Character
+
+    if not character then
         return false
     end
 
     Camera = Workspace.CurrentCamera
 
+    local origin = Camera.CFrame.Position
+    local direction = part.Position - origin
+
     local params = RaycastParams.new()
 
-    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterType =
+        Enum.RaycastFilterType.Exclude
+
     params.FilterDescendantsInstances = {
-        myCharacter,
-        Camera,
+        character,
+        Camera
     }
 
     params.IgnoreWater = true
 
-    local origin = Camera.CFrame.Position
-    local direction = targetPart.Position - origin
-
-    local result = Workspace:Raycast(
-        origin,
-        direction,
-        params
-    )
+    local result =
+        Workspace:Raycast(
+            origin,
+            direction,
+            params
+        )
 
     if not result then
         return true
     end
 
-    return result.Instance:IsDescendantOf(targetCharacter)
+    return result.Instance:IsDescendantOf(
+        other.Character
+    )
 end
 
---------------------------------------------------
--- FIND TARGET
---------------------------------------------------
-
-local function findTarget()
-    local _, _, myRoot = getCharacter()
-
-    if not myRoot then
-        return nil
-    end
-
-    local bestPlayer = nil
-    local bestHead = nil
-    local bestDistance = Bot.MaxTargetDistance
-
-    for _, player in ipairs(Players:GetPlayers()) do
-        if isEnemy(player) and isAlive(player) then
-
-            local head = getHead(player)
+--
 Buy humanoid.health | Spaceship
 Buy humanoid.health | Spaceship
 humanoid.Health
 
 
-if head then
+-----------------------------------------------
+-- FIND NEAREST VISIBLE ENEMY
+--------------------------------------------------
+
+local function findTarget()
+    local _, _, root = getCharacter()
+
+    if not root then
+        return nil
+    end
+
+    local best = nil
+    local bestPart = nil
+    local bestDistance = Bot.MaxTargetDistance
+
+    for _, other in ipairs(Players:GetPlayers()) do
+
+        if isEnemy(other) then
+
+            local part = getTargetPart(other)
+
+            if part then
+
                 local distance =
-                    (myRoot.Position - head.Position).Magnitude
+                    (
+                        root.Position
+                        - part.Position
+                    ).Magnitude
 
                 if distance < bestDistance then
 
-                    if canSee(player.Character, head) then
+                    if canSee(other, part) then
+
+                        best = other
+                        bestPart = part
                         bestDistance = distance
-                        bestPlayer = player
-                        bestHead = head
                     end
                 end
             end
         end
     end
 
-    return bestPlayer, bestHead, bestDistance
+    return best, bestPart, bestDistance
 end
 
 --------------------------------------------------
 -- AIM
 --------------------------------------------------
 
-local function aimAt(part)
+local function lookAt(part)
     if not part then
         return
     end
 
     Camera = Workspace.CurrentCamera
 
-    Camera.CFrame = CFrame.lookAt(
-        Camera.CFrame.Position,
-        part.Position
-    )
+    -- Просто смотрим в сторону противника.
+    -- Никакого silent aim / raycast hook.
+    Camera.CFrame =
+        CFrame.lookAt(
+            Camera.CFrame.Position,
+            part.Position
+        )
 end
 
 --------------------------------------------------
@@ -236,475 +268,317 @@ end
 --------------------------------------------------
 
 local function shoot()
+    if os.clock() - lastShot < Bot.FireDelay then
+        return
+    end
+
+    lastShot = os.clock()
+
     Camera = Workspace.CurrentCamera
 
-    local x = Camera.ViewportSize.X / 2
-    local y = Camera.ViewportSize.Y / 2
+    local x =
+        Camera.ViewportSize.X / 2
+
+    local y =
+        Camera.ViewportSize.Y / 2
+
+    --------------------------------------------------
+    -- Executor mouse functions
+    --------------------------------------------------
+
+    if mouse1click then
+        mouse1click()
+        return
+    end
 
     if mouse1press and mouse1release then
+
         mouse1press()
-        task.wait(0.025)
+
+        task.wait(0.03)
+
         mouse1release()
+
         return
     end
 
-    VirtualInputManager:SendMouseButtonEvent(
-        x,
-        y,
-        0,
-        true,
-        game,
-        0
-    )
+    --------------------------------------------------
+    -- fallback
+    --------------------------------------------------
 
-    task.wait(0.025)
+    pcall(function()
 
-    VirtualInputManager:SendMouseButtonEvent(
-        x,
-        y,
-        0,
-        false,
-        game,
-        0
-    )
+        VirtualInputManager:SendMouseButtonEvent(
+            x,
+            y,
+            0,
+            true,
+            game,
+            0
+        )
+
+        task.wait(0.03)
+
+        VirtualInputManager:SendMouseButtonEvent(
+            x,
+            y,
+            0,
+            false,
+            game,
+            0
+        )
+    end)
 end
 
 --------------------------------------------------
--- COMBAT MOVEMENT
+-- MOVE TO ENEMY
 --------------------------------------------------
 
-local strafeDirection = 1
-local lastStrafeSwitch = 0
-
-local function moveAgainstTarget(targetPart, distance)
+local function moveToEnemy(part, distance)
     local _, humanoid, root = getCharacter()
 
-    if not humanoid or not root or not targetPart then
+    if not humanoid
+        or not root
+        or not part
+    then
         return
     end
 
-    local offset =
-        targetPart.Position - root.Position
+    --------------------------------------------------
+    -- already close
+    --------------------------------------------------
 
-    if offset.Magnitude <= 0 then
-        return
-    end
+    if distance <= Bot.StopDistance then
 
-    local direction = offset.Unit
+        -- небольшое движение в сторону,
+        -- чтобы бот не стоял как столб
 
-    if distance > Bot.StopDistance then
+        local delta =
+            part.Position - root.Position
 
-        local destination =
-            targetPart.Position
-            - direction * Bot.StopDistance
+        if delta.Magnitude > 0.1 then
 
-        if Bot.Strafe then
+            local dir = delta.Unit
 
-            if os.clock() - lastStrafeSwitch > 0.8 then
-                strafeDirection *= -1
-                lastStrafeSwitch = os.clock()
-            end
+            local side =
+                Vector3.new(
+                    -dir.Z,
+                    0,
+                    dir.X
+                )
 
-            local side = Vector3.new(
-                -direction.Z,
-                0,
-                direction.X
+            humanoid:MoveTo(
+                root.Position
+                + side * 6
             )
-
-            destination +=
-                side
-                * Bot.StrafeDistance
-                * strafeDirection
         end
 
-        humanoid:MoveTo(destination)
-
-    elseif Bot.Strafe then
-
-        local side = Vector3.new(
-            -direction.Z,
-            0,
-            direction.X
-        )
-
-        humanoid:MoveTo(
-            root.Position
-            + side
-            * Bot.StrafeDistance
-            * strafeDirection
-        )
+        return
     end
+
+    --------------------------------------------------
+    -- normal movement
+    --------------------------------------------------
+
+    local delta =
+        part.Position - root.Position
+
+    if delta.Magnitude <= 0.1 then
+        return
+    end
+
+    local direction = delta.Unit
+
+    local destination =
+        part.Position
+        - direction
+        * Bot.StopDistance
+
+    humanoid:MoveTo(destination)
 end
 
+-----------------------------
+
+
+---------------------
+-- WANDER
 --------------------------------------------------
--- PROMPT HELPERS
---------------------------------------------------
 
-local function getPromptText(prompt)
-    local parentName = ""
-
-    if prompt.Parent then
-        parentName = prompt.Parent.Name
-    end
-
-    return string.lower(
-        prompt.Name
-        .. " "
-        .. parentName
-        .. " "
-        .. tostring(prompt.ActionText)
-        .. " "
-        .. tostring(prompt.ObjectText)
-    )
-end
-
-local function getObjectPosition(object)
-    if not object then
-        return nil
-    end
-
-    if object:IsA("BasePart") then
-        return object.Position
-    end
-
-    if object:IsA("Model") then
-        return object:GetPivot().Position
-    end
-
-    if object.Parent then
-        return getObjectPosition(object.Parent)
-    end
-
-    return nil
-end
-
-local function findPrompt(words)
+local function chooseWanderPoint()
     local _, _, root = getCharacter()
 
     if not root then
-        return nil
+        return
     end
 
-    local closestPrompt = nil
-    local closestDistance = math.huge
-
-    for _, object in ipairs(Workspace:GetDescendants()) do
-
-        if object:IsA("ProximityPrompt")
-            and object.Enabled
-        then
-
-            local text = getPr
-
-
-omptText(object)
-
-            local matches = false
-
-            for _, word in ipairs(words) do
-                if string.find(
-                    text,
-                    string.lower(word),
-                    1,
-                    true
-                ) then
-                    matches = true
-                    break
-                end
-            end
-
-            if matches then
-
-                local position =
-                    getObjectPosition(object.Parent)
-
-                if position then
-
-                    local distance =
-                        (root.Position - position).Magnitude
-
-                    if distance < closestDistance then
-                        closestDistance = distance
-                        closestPrompt = object
-                    end
-                end
-            end
-        end
-    end
-
-    return closestPrompt, closestDistance
-end
-
---------------------------------------------------
--- MOVE TO PROMPT
---------------------------------------------------
-
-local function moveToPrompt(prompt)
-    local _, humanoid, root = getCharacter()
-
-    if not humanoid or not root then
-        return false
-    end
-
-    local position =
-        getObjectPosition(prompt.Parent)
-
-    if not position then
-        return false
-    end
+    local angle =
+        math.random() * math.pi * 2
 
     local distance =
-        (root.Position - position).Magnitude
-
-    if distance > Bot.InteractionDistance then
-        humanoid:MoveTo(position)
-        return false
-    end
-
-    return true
-end
-
---------------------------------------------------
--- INTERACT
---------------------------------------------------
-
-local function activatePrompt(prompt)
-    if not prompt then
-        return false
-    end
-
-    if fireproximityprompt then
-        local ok = pcall(function()
-            fireproximityprompt(prompt)
-        end)
-
-        return ok
-    end
-
-    return false
-end
-
---------------------------------------------------
--- PLANT
---------------------------------------------------
-
-local PlantWords = {
-    "plant",
-    "bomb",
-    "site",
-    "plant bomb",
-    "установ",
-    "бомб",
-}
-
-local function handlePlant()
-    if not Bot.AutoPlant then
-        return false
-    end
-
-    local prompt, distance =
-        findPrompt(PlantWords)
-
-    if not prompt then
-        return false
-    end
-
-    log(
-        "Plant:",
-        prompt:GetFullName(),
-        math.floor(distance)
-    )
-
-    if moveToPrompt(prompt) then
-
-        activatePrompt(prompt)
-
-        task.wait(
-            math.max(
-                tonumber(prompt.HoldDuration) or 0,
-                0.25
-            ) + 0.1
+        math.random(
+            math.floor(Bot.WanderRadius * 0.4),
+            Bot.WanderRadius
         )
-    end
 
-    return true
+    local offset =
+        Vector3.new(
+            math.cos(angle) * distance,
+            0,
+            math.sin(angle) * distance
+        )
+
+    wanderPoint =
+        root.Position + offset
 end
 
---------------------------------------------------
--- REWARD
---------------------------------------------------
-
-local RewardWords = {
-    "reward",
-    "claim",
-    "collect",
-    "pickup",
-    "loot",
-    "drop",
-    "награ",
-    "забрать",
-    "получ",
-}
-
-local function handleReward()
-    if not Bot.AutoReward then
-        return false
+local function wander()
+    if not Bot.Wander then
+        return
     end
 
-    local prompt, distance =
-        findPrompt(RewardWords)
+    local _, humanoid, root =
+        getCharacter()
 
-    if not prompt then
-        return false
+    if not humanoid or not root then
+        return
     end
 
-    log(
-        "Reward:",
-        prompt:GetFullName(),
-        math.floor(distance)
-    )
+    if not wanderPoint
+        or (root.Position - wanderPoint).Magnitude < 8
+        or os.clock() - lastWander > 7
+    then
 
-    if moveToPrompt(prompt) then
-        activatePrompt(prompt)
-        task.wait(0.15)
+        chooseWanderPoint()
+
+        lastWander =
+            os.clock()
     end
 
-    return true
+    if wanderPoint then
+        humanoid:MoveTo(wanderPoint)
+    end
 end
-
---------------------------------------------------
--- RESPAWN
---------------------------------------------------
-
-LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(2)
-
-    Camera = Workspace.CurrentCamera
-
-    log("Respawned")
-end)
 
 --------------------------------------------------
 -- MAIN LOOP
 --------------------------------------------------
 
-log("Bot loaded")
-
 task.spawn(function()
 
-    local lastShot = 0
+    print("[AutoBot] started")
 
     while Bot.Enabled do
 
-        local char, humanoid, root =
+        local character,
+            humanoid,
+            root =
             getCharacter()
 
-        if not char
+        if not character
             or not humanoid
             or not root
-            or humanoid.Health <= 0
         then
-            task.wait(0.5)
+
+            task.wait(1)
             continue
         end
 
-        ------------------------------------------
-        -- COMBAT
-        --------------------------------
-Buy humanoid.health | Spaceship
-Buy humanoid.health | Spaceship
-humanoid.Health
+        ------------------------------------------------
+        -- LOOK FOR ENEMY
+        ------------------------------------------------
 
-
-----------
-
-        local targetPlayer,
-            targetHead,
+        local target,
+            part,
             distance =
             findTarget()
 
-        if targetPlayer
-            and targetHead
-            and isAlive(targetPlayer)
-        then
+        currentTarget = target
 
-            moveAgainstTarget(
-                targetHead,
+        ------------------------------------------------
+        -- COMBAT
+        ------------------------------------------------
+
+        if target and part then
+
+            moveToEnemy(
+                part,
                 distance
             )
 
-            -- continuously lock camera to head
-            aimAt(targetHead)
+            -- смотрим на противника
+            lookAt(part)
 
-            if distance <= Bot.ShootDistance then
+            -- стреляем только если реально видим его
+            if distance <= Bot.ShootDistance
+                and canSee(target, part)
+            then
 
-                if os.clock() - lastShot
-                    >= Bot.FireInterval
-                then
-
-                    -- re-aim immediately before firing
-                    aimAt(targetHead)
-
-                    shoot()
-
-                    lastShot = os.clock()
-                end
+                shoot()
             end
+
+        ------------------------------------------------
+        -- NO ENEMIES
+        ------------------------------------------------
 
         else
 
-            --------------------------------------
-            -- NO ENEMIES -> OBJECTIVES
-            --------------------------------------
+            currentTarget = nil
 
-            local busy = false
-
-            if Bot.AutoPlant then
-                busy = handlePlant()
-            end
-
-            if not busy
-                and Bot.AutoReward
-            then
-                busy = handleReward()
-            end
-
-            if not busy then
-                humanoid:MoveTo(root.Position)
-            end
+            wander()
         end
 
-        task.wait(Bot.MoveUpdate)
+        task.wait(
+            Bot.TargetUpdate
+        )
     end
 
-    log("Bot stopped")
+    print("[AutoBot] stopped")
+end)
+
+--------------------------------------------------
+-- RESPAWN
+--------------------------------------------------
+
+Player.CharacterAdded:Connect(function()
+
+    currentTarget = nil
+    wanderPoint = nil
+
+    task.wait(2)
+
+    Camera =
+        Workspace.CurrentCamera
+
+    print("[AutoBot] respawned")
 end)
 
 --------------------------------------------------
 -- CONTROLS
 --------------------------------------------------
 
-getgenv().StopTestAutoBot = function()
+_G.AutoBot = Bot
+
+_G.StopAutoBot = function()
     Bot.Enabled = false
 end
 
-getgenv().StartTestAutoBot = function()
-    Bot.Enabled = true
-end
-
 print([[
-====================================
- TEST AUTOBOT LOADED
-====================================
+===============================
+ AUTOBOT LOADED
 
-Stop:
-getgenv().StopTestAutoBot()
+ He will:
+ - wander around
+ - find visible enemies
+ - run toward enemies
+ - aim normally
+ - shoot automatically
+ - ignore enemies behind walls
 
-Settings:
+ Stop:
+ _G.StopAutoBot()
+===============================
+]])-
 
-getgenv().TestAutoBot.AutoPlant = true
-getgenv().TestAutoBot.AutoReward = true
-getgenv().TestAutoBot.TeamCheck = true
 
-====================================
-]])
+
+
