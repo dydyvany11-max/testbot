@@ -58,10 +58,10 @@ local CONFIG = {
 
 	-- Скорость автоматического обзора,
 	-- когда целей нет.
-	ScanDegreesPerSecond = 75,
+	ScanDegreesPerSecond = 150,
 
 	-- Скорость доведения камеры к врагу.
-	AimSpeed = 28,
+	AimSpeed = 50,
 
 	PreferHead = true,
 
@@ -106,9 +106,9 @@ local CONFIG = {
 
 	-- Бот выбирает новую точку относительно
 	-- ТЕКУЩЕЙ позиции, поэтому постепенно гуляет по карте.
-	PatrolStepMin = 45,
+	PatrolStepMin = 70,
 
-	PatrolStepMax = 110,
+	PatrolStepMax = 160,
 
 	-- Если он слишком долго идёт в одну точку,
 	-- выбирается новая.
