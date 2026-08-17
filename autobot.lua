@@ -38,7 +38,7 @@ local CONFIG = {
 	---------------------------------------------------------------
 	AimSpeed = 65,
 	AimPositionSpeed = 40,
-	
+	CameraHeight = 1.8,
 	HeadOffsetY = 1.5,
 	FireAimTolerance = 2.0,
 -- Допуск угла (в пикселях/градусах) перед выстрелом
@@ -197,14 +197,20 @@ local function setupCharacter(character)
 
 	task.delay(0.1, function()
 
-		local camera =
-			Workspace.CurrentCamera
+	local camera =
+		Workspace.CurrentCamera
 
-		if camera then
-			camera.CameraType =
-				Enum.CameraType.Custom
-		end
-	end)
+	if not camera then
+		return
+	end
+
+	if camera.CFrame.LookVector.Magnitude > 0.01 then
+		CameraForward =
+			camera.CFrame.LookVector.Unit
+	end
+
+	camera.CameraType =
+		Enum.CameraType.Scriptable
 
 	print(
 		"[BOT] READY",
@@ -582,11 +588,11 @@ local function cameraAngleTo(position)
 end
 
 ---------------------------------------------------------------------
--- CAMERA AIM
+-- STABLE CAMERA AIM
 ---------------------------------------------------------------------
 
 local CAMERA_NAME =
-	"AutoBotCamera"
+	"AutoBotStableCamera"
 
 RunService:UnbindFromRenderStep(
 	CAMERA_NAME
@@ -596,18 +602,15 @@ RunService:BindToRenderStep(
 
 	CAMERA_NAME,
 
-	Enum.RenderPriority.Camera.Value + 1,
+	Enum.RenderPriority.Last.Value,
 
 	function(dt)
 
-		if not Root
+		if not Character
+			or not Root
 			or not Humanoid
 			or Humanoid.Health <= 0 then
 
-			return
-		end
-
-		if not AimPosition then
 			return
 		end
 
@@ -618,6 +621,99 @@ RunService:BindToRenderStep(
 			return
 		end
 
+		---------------------------------------------------------
+		-- НИКТО кроме нас камерой не управляет
+		---------------------------------------------------------
+
+		if camera.CameraType
+			~= Enum.CameraType.Scriptable then
+
+			camera.CameraType =
+				Enum.CameraType.Scriptable
+		end
+
+		---------------------------------------------------------
+		-- СТАБИЛЬНАЯ позиция камеры
+		-- НЕ camera.CFrame.Position
+		---------------------------------------------------------
+
+		local cameraPosition =
+			Root.Position
+			+ Vector3.new(
+				0,
+				CONFIG.CameraHeight,
+				0
+			)
+
+		---------------------------------------------------------
+		-- TARGET SMOOTHING
+		---------------------------------------------------------
+
+		if AimPosition then
+
+			if not SmoothedAimPosition then
+
+				SmoothedAimPosition =
+					AimPosition
+
+			else
+
+				local positionAlpha =
+					1
+					- math.exp(
+						-CONFIG.AimPositionSpeed
+						* dt
+					)
+
+				SmoothedAimPosition =
+					SmoothedAimPosition:Lerp(
+						AimPosition,
+						positionAlpha
+					)
+			end
+
+			-----------------------------------------------------
+			-- ROTATION SMOOTHING
+			-----------------------------------------------------
+
+			local direction =
+				SmoothedAimPosition
+				- cameraPosition
+
+			if direction.Magnitude > 0.01 then
+
+				local aimAlpha =
+					1
+					- math.exp(
+						-CONFIG.AimSpeed
+						* dt
+					)
+
+				CameraForward =
+					CameraForward:Lerp(
+						direction.Unit,
+						aimAlpha
+					)
+
+				if CameraForward.Magnitude > 0.01 then
+					CameraForward =
+						CameraForward.Unit
+				end
+			end
+		end
+
+		---------------------------------------------------------
+		-- ЕДИНСТВЕННАЯ запись камеры за кадр
+		---------------------------------------------------------
+
+		camera.CFrame =
+			CFrame.lookAt(
+				cameraPosition,
+				cameraPosition
+					+ CameraForward
+			)
+	end
+)
 		---------------------------------------------------------
 		-- SMOOTH TARGET POSITION
 		---------------------------------------------------------
