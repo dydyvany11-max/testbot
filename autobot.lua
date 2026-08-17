@@ -28,24 +28,19 @@ local CONFIG = {
 	---------------------------------------------------------------
 
 	GlobalChaseRadius = 10000,
-
 	InterruptRadius = 500,
 
 	ThreatSwitchCooldown = 0.20,
 	ThreatSwitchMargin = 15,
 
 	---------------------------------------------------------------
-	-- AIM
+	-- SAFE AIM (BAC SAFE)
 	---------------------------------------------------------------
 
-	AimSpeed = 45,
-	AimPositionSpeed = 35,
+	AimSmoothness = 0.22, -- Сглаживание (чем меньше, тем плавнее наведение)
+	HeadOffsetY = 1.45,    -- Высота головы
 
-	HeadOffsetY = 1.55,
-
-	FireAimTolerance = 1.7,
-
-	CameraHeight = 1.8,
+	FireAimTolerance = 4.0, -- Допуск угла (в пикселях/градусах) перед выстрелом
 
 	---------------------------------------------------------------
 	-- COMBAT
@@ -56,37 +51,24 @@ local CONFIG = {
 	StopToShootDistance = 60,
 	ResumeChaseDistance = 78,
 
-	AimSettleTime = 0.04,
-
-	FireDelay = 0.08,
+	AimSettleTime = 0.06, -- Задержка реакции перед выстрелом
+	FireDelay = 0.09,     -- Задержка между выстрелами
 
 	---------------------------------------------------------------
-	-- PATH
+	-- PATH & PATROL
 	---------------------------------------------------------------
 
 	AgentRadius = 2,
 	AgentHeight = 5,
-
 	AgentCanJump = true,
 	AgentCanClimb = false,
 
 	WaypointReachDistance = 5,
-
 	RepathInterval = 0.35,
 	RepathDistance = 6,
 
-	---------------------------------------------------------------
-	-- PATROL
-	---------------------------------------------------------------
-
-	PatrolMinDistance = 60,
-	PatrolMaxDistance = 150,
-
-	PatrolTimeout = 8,
-
-	Debug = true,
+	Debug = false,
 }
-
 ---------------------------------------------------------------------
 -- CHARACTER
 ---------------------------------------------------------------------
@@ -150,27 +132,8 @@ local RNG = Random.new()
 local Controls = nil
 
 local function disableControls()
-
-	if Controls then
-		return
-	end
-
-	pcall(function()
-
-		local PlayerModule =
-			require(
-				LocalPlayer
-					:WaitForChild("PlayerScripts")
-					:WaitForChild("PlayerModule")
-			)
-
-		Controls =
-			PlayerModule:GetControls()
-
-		Controls:Disable()
-	end)
+	-- Оставлено пустым для предотвращения бана за блокировку PlayerModule
 end
-
 ---------------------------------------------------------------------
 -- SETUP CHARACTER
 ---------------------------------------------------------------------
@@ -602,107 +565,66 @@ local function cameraAngleTo(position)
 	)
 end
 
+local UserInputService = game:GetService("UserInputService")
+
 ---------------------------------------------------------------------
--- CAMERA
+-- STABLE HEAD AIM WITH MICRO-NOISE (HUMANIZED)
 ---------------------------------------------------------------------
 
-local CAMERA_NAME =
-	"AutoBotStableCamera"
+local function getAimPosition(character, targetRoot)
+	-- Добавляем микро-шум к точке прицеливания (чтобы не было идеального лока в 1 пиксель)
+	local noiseX = RNG:NextNumber(-0.12, 0.12)
+	local noiseY = RNG:NextNumber(-0.08, 0.08)
+	local noiseZ = RNG:NextNumber(-0.12, 0.12)
 
-RunService:
-	UnbindFromRenderStep(
-		CAMERA_NAME
-	)
+	return targetRoot.Position + Vector3.new(noiseX, CONFIG.HeadOffsetY + noiseY, noiseZ)
+end
 
-RunService:
-	BindToRenderStep(
+---------------------------------------------------------------------
+-- BAC-SAFE CAMERA & MOUSE AIMING
+---------------------------------------------------------------------
 
-		CAMERA_NAME,
+local CAMERA_NAME = "AutoBotStableCamera"
 
-		Enum.RenderPriority.Last.Value,
+RunService:UnbindFromRenderStep(CAMERA_NAME)
 
-		function(dt)
-
-			if not Root
-				or not Humanoid
-				or Humanoid.Health <= 0 then
-
-				return
-			end
-
-			local camera =
-				Workspace.CurrentCamera
-
-			if not camera then
-				return
-			end
-
-			camera.CameraType =
-				Enum.CameraType.Scriptable
-
-			local cameraPosition =
-				Root.Position
-				+ Vector3.new(
-					0,
-					CONFIG.CameraHeight,
-					0
-				)
-
-			if AimPosition then
-
-				if not SmoothedAimPosition then
-
-					SmoothedAimPosition =
-						AimPosition
-
-				else
-
-					local posAlpha =
-						1
-						- math.exp(
-							-CONFIG.AimPositionSpeed
-							* dt
-						)
-
-					SmoothedAimPosition =
-						SmoothedAimPosition:
-							Lerp(
-								AimPosition,
-								posAlpha
-							)
-				end
-
-				local desired =
-					SmoothedAimPosition
-					- cameraPosition
-
-				if desired.Magnitude > 0.01 then
-
-					local alpha =
-						1
-						- math.exp(
-							-CONFIG.AimSpeed
-							* dt
-						)
-
-					CameraForward =
-						CameraForward:
-							Lerp(
-								desired.Unit,
-								alpha
-							).Unit
-				end
-			end
-
-			camera.CFrame =
-				CFrame.lookAt(
-					cameraPosition,
-					cameraPosition
-						+ CameraForward
-				)
+RunService:BindToRenderStep(
+	CAMERA_NAME,
+	Enum.RenderPriority.Camera.Value + 1,
+	function(dt)
+		if not Root or not Humanoid or Humanoid.Health <= 0 then
+			return
 		end
-	)
 
+		local camera = Workspace.CurrentCamera
+		if not camera then
+			return
+		end
+
+		-- Возвращаем стандартный режим камеры, чтобы игра сама обрабатывала MouseDelta
+		if camera.CameraType ~= Enum.CameraType.Custom then
+			camera.CameraType = Enum.CameraType.Custom
+		end
+
+		-- Наводимся только через физическое смещение мыши (mousemoverel)
+		if AimPosition and mousemoverel then
+			local screenPos, onScreen = camera:WorldToViewportPoint(AimPosition)
+
+			if onScreen then
+				local mousePos = UserInputService:GetMouseLocation()
+				local deltaX = screenPos.X - mousePos.X
+				local deltaY = screenPos.Y - mousePos.Y
+
+				-- Вычисляем плавно движение мыши
+				local moveX = deltaX * CONFIG.AimSmoothness
+				local moveY = deltaY * CONFIG.AimSmoothness
+
+				-- Передаем реальное движение курсора движку Roblox
+				mousemoverel(moveX, moveY)
+			end
+		end
+	end
+)
 ---------------------------------------------------------------------
 -- STOP
 ---------------------------------------------------------------------
@@ -1024,33 +946,43 @@ end
 --
 -- Вот единственное место, отвечающее за ФАКТИЧЕСКИЙ выстрел.
 ---------------------------------------------------------------------
+local FiringInProgress = false
 
 local function performFire()
-	-- 1. Если есть функции экзекутора (mouse1press / mouse1release)
-	if mouse1press and mouse1release then
-		mouse1press()
-		task.delay(CONFIG.FireDelay or 0.08, function()
+	if FiringInProgress then
+		return false
+	end
+
+	FiringInProgress = true
+
+	task.spawn(function()
+		-- Время удержания кнопки выстрела пальцем (30-55 мс)
+		local pressDuration = math.random(30, 55) / 1000
+
+		if mouse1press and mouse1release then
+			mouse1press()
+			task.wait(pressDuration)
 			mouse1release()
-		end)
-		return true
-	end
+		elseif mouse1click then
+			mouse1click()
+		else
+			local VIM = game:GetService("VirtualInputManager")
+			if VIM then
+				VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+				task.wait(pressDuration)
+				VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+			end
+		end
 
-	-- 2. Запасной вариант через встроенный VirtualInputManager
-	local VIM = game:GetService("VirtualInputManager")
-	if VIM then
-		-- Нажатие ЛКМ (Button1)
-		VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-		
-		task.delay(CONFIG.FireDelay or 0.08, function()
-			-- Отпускание ЛКМ
-			VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-		end)
-		return true
-	end
+		-- Задержка перед следующим выстрелом с рандомизацией
+		local cooldown = CONFIG.FireDelay + (math.random(-10, 15) / 1000)
+		task.wait(math.max(0.03, cooldown))
 
-	return false
+		FiringInProgress = false
+	end)
+
+	return true
 end
-
 	-----------------------------------------------------------------
 	-- >>> FIRE HOOK <<<
 	--
