@@ -976,29 +976,7 @@ end
 	-- Для нормального Roblox Tool сейчас:
 	-----------------------------------------------------------------
 
-	local success =
-		pcall(function()
-
-			tool:Activate()
-		end)
-
-	if not success then
-		return false
-	end
-
-	task.delay(0.025, function()
-
-		if tool
-			and tool.Parent then
-
-			pcall(function()
-				tool:Deactivate()
-			end)
-		end
-	end)
-
-	return true
-end
+	
 
 ---------------------------------------------------------------------
 -- FIRE DECISION
