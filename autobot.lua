@@ -195,22 +195,26 @@ local function setupCharacter(character)
 
 	disableControls()
 
+		disableControls()
+
 	task.delay(0.1, function()
 
-	local camera =
-		Workspace.CurrentCamera
+		local camera =
+			Workspace.CurrentCamera
 
-	if not camera then
-		return
-	end
+		if not camera then
+			return
+		end
 
-	if camera.CFrame.LookVector.Magnitude > 0.01 then
-		CameraForward =
-			camera.CFrame.LookVector.Unit
-	end
+		if camera.CFrame.LookVector.Magnitude > 0.01 then
 
-	camera.CameraType =
-		Enum.CameraType.Scriptable
+			CameraForward =
+				camera.CFrame.LookVector.Unit
+		end
+
+		camera.CameraType =
+			Enum.CameraType.Scriptable
+	end)
 
 	print(
 		"[BOT] READY",
@@ -714,58 +718,7 @@ RunService:BindToRenderStep(
 			)
 	end
 )
-		---------------------------------------------------------
-		-- SMOOTH TARGET POSITION
-		---------------------------------------------------------
-
-		if not SmoothedAimPosition then
-
-			SmoothedAimPosition =
-				AimPosition
-
-		else
-
-			local targetAlpha =
-				1
-				- math.exp(
-					-CONFIG.AimPositionSpeed
-					* dt
-				)
-
-			SmoothedAimPosition =
-				SmoothedAimPosition:Lerp(
-					AimPosition,
-					targetAlpha
-				)
-		end
-
-		---------------------------------------------------------
-		-- CAMERA -> TARGET
-		---------------------------------------------------------
-
-		local current =
-			camera.CFrame
-
-		local wanted =
-			CFrame.lookAt(
-				current.Position,
-				SmoothedAimPosition
-			)
-
-		local alpha =
-			1
-				- math.exp(
-					-CONFIG.AimSpeed
-					* dt
-				)
-
-		camera.CFrame =
-			current:Lerp(
-				wanted,
-				alpha
-			)
-	end
-)
+		
 ---------------------------------------------------------------------
 -- STOP
 ---------------------------------------------------------------------
