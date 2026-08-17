@@ -134,7 +134,32 @@ local RNG = Random.new()
 local Controls = nil
 
 local function disableControls()
-	-- Оставлено пустым для предотвращения бана за блокировку PlayerModule
+
+	if Controls then
+		return
+	end
+
+	local success, err =
+		pcall(function()
+
+			local PlayerModule =
+				require(
+					LocalPlayer
+						:WaitForChild("PlayerScripts")
+						:WaitForChild("PlayerModule")
+				)
+
+			Controls =
+				PlayerModule:GetControls()
+
+			Controls:Disable()
+		end)
+
+	if success then
+		print("[BOT] Player controls disabled")
+	else
+		warn("[BOT] Failed to disable controls:", err)
+	end
 end
 ---------------------------------------------------------------------
 -- SETUP CHARACTER
@@ -1366,18 +1391,94 @@ local function processChaseTarget(player)
 
 	return true
 end
+---------------------------------------------------------------------
+-- MAIN AI LOOP
+---------------------------------------------------------------------
 
 task.spawn(function()
+
 	while true do
-		if not Character or not Root then
-			print("[DEBUG] Ошибка: Персонаж НЕ загружен. Завис setupCharacter!")
-		elseif not ChaseTarget and not CombatTarget then
-			print("[DEBUG] Персонаж есть, но ВРАГОВ НЕТ. Выключи TeamCheck!")
+
+		if Character
+			and Character.Parent
+			and Humanoid
+			and Root
+			and Humanoid.Health > 0 then
+
+			local success, err =
+				pcall(function()
+
+					-------------------------------------------------
+					-- Ищем / обновляем цели
+					-------------------------------------------------
+
+					updateTargets()
+
+					-------------------------------------------------
+					-- Сначала прямой контакт
+					-------------------------------------------------
+
+					if CombatTarget then
+
+						if processCombatTarget(
+							CombatTarget
+						) then
+
+							return
+						end
+
+						CombatTarget =
+							nil
+
+						FiringStance =
+							false
+
+						AimSettlingSince =
+							nil
+					end
+
+					-------------------------------------------------
+					-- Если прямого контакта нет:
+					-- преследуем ближайшую цель через Pathfinding
+					-------------------------------------------------
+
+					if ChaseTarget then
+
+						if processChaseTarget(
+							ChaseTarget
+						) then
+
+							return
+						end
+
+						ChaseTarget =
+							nil
+					end
+
+					-------------------------------------------------
+					-- Никого нет
+					-------------------------------------------------
+
+					stopMovement()
+
+				end)
+
+			if not success then
+
+				warn(
+					"[BOT ERROR]",
+					err
+				)
+			end
+
 		else
-			local target = CombatTarget or ChaseTarget
-			print("[DEBUG] Цель найдена:", target.Name, "| Идем к ней...")
+
+			stopMovement()
 		end
-		task.wait(1)
+
+		task.wait(
+			CONFIG.ThinkInterval
+		)
 	end
 end)
 
