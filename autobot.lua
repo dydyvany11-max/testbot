@@ -951,11 +951,24 @@ end
 local FiringInProgress = false
 
 local function performFire()
-    pcall(function()
-        -- Используем локальный IP компьютера в сети вместо localhost
-        game:HttpGet("http://10.0.2.2:8080/fire")
-    end)
-    return true
+	if FiringInProgress then
+		return false
+	end
+
+	FiringInProgress = true
+
+	task.spawn(function()
+		pcall(function()
+			-- Запрос к Python-серверу на ПК
+			game:HttpGet("http://10.0.2.2:8080/fire")
+		end)
+
+		-- Задержка между выстрелами (подгони под темп оружия)
+		task.wait(CONFIG.FireDelay or 0.08)
+		FiringInProgress = false
+	end)
+
+	return true
 end
 	-----------------------------------------------------------------
 	-- >>> FIRE HOOK <<<
