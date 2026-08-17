@@ -962,6 +962,8 @@ end
 ---------------------------------------------------------------------
 local FiringInProgress = false
 
+local FiringInProgress = false
+
 local function performFire()
 	if FiringInProgress then
 		return false
@@ -970,8 +972,7 @@ local function performFire()
 	FiringInProgress = true
 
 	task.spawn(function()
-		-- Время удержания кнопки выстрела пальцем (30-55 мс)
-		local pressDuration = math.random(30, 55) / 1000
+		local pressDuration = math.random(10, 20) / 1000
 
 		if mouse1press and mouse1release then
 			mouse1press()
@@ -988,10 +989,7 @@ local function performFire()
 			end
 		end
 
-		-- Задержка перед следующим выстрелом с рандомизацией
-		local cooldown = CONFIG.FireDelay + (math.random(-10, 15) / 1000)
-		task.wait(math.max(0.03, cooldown))
-
+		task.wait(CONFIG.FireDelay)
 		FiringInProgress = false
 	end)
 
