@@ -77,16 +77,6 @@ local Character = nil
 local Humanoid = nil
 local Root = nil
 
----------------------------------------------------------------------
--- TARGETS
----------------------------------------------------------------------
-
-local ChaseTarget = nil
-local CombatTarget = nil
-
-local LastDetection = 0
-local LastThreatSwitch = 0
-
 
 ---------------------------------------------------------------------
 -- TARGETS
@@ -98,49 +88,7 @@ local CombatTarget = nil
 local LastDetection = 0
 local LastThreatSwitch = 0
 
----------------------------------------------------------------------
--- SILENT AIM HOOK
----------------------------------------------------------------------
 
-local mt = getrawmetatable(game)
-local oldNamecall = mt.__namecall
-setreadonly(mt, false)
-
-mt.__namecall = newcclosure(function(self, ...)
-	local method = getnamecallmethod()
-	local args = { ... }
-
-	if method == "Raycast" or method == "raycast" then
-		if CombatTarget and CombatTarget.Character then
-			local head = CombatTarget.Character:FindFirstChild("Head")
-			if head then
-				local origin = args[1]
-				args[2] = (head.Position - origin).Unit * 1000
-				return oldNamecall(self, unpack(args))
-			end
-		end
-	end
-
-	if method == "FireServer" and tostring(self):lower():find("shoot") then
-		if CombatTarget and CombatTarget.Character then
-			local head = CombatTarget.Character:FindFirstChild("Head")
-			if head then
-				for i, arg in ipairs(args) do
-					if typeof(arg) == "Vector3" then
-						args[i] = head.Position
-					elseif typeof(arg) == "Instance" and arg:IsA("BasePart") then
-						args[i] = head
-					end
-				end
-				return oldNamecall(self, unpack(args))
-			end
-		end
-	end
-
-	return oldNamecall(self, ...)
-end)
-
-setreadonly(mt, true)
 ---------------------------------------------------------------------
 -- AIM
 ---------------------------------------------------------------------
