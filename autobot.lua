@@ -36,11 +36,12 @@ local CONFIG = {
 	---------------------------------------------------------------
 	-- SAFE AIM (BAC SAFE)
 	---------------------------------------------------------------
-
-	AimSmoothness = 0.22, -- Сглаживание (чем меньше, тем плавнее наведение)
-	HeadOffsetY = 1.45,    -- Высота головы
-
-	FireAimTolerance = 4.0, -- Допуск угла (в пикселях/градусах) перед выстрелом
+	AimSpeed = 65,
+	AimPositionSpeed = 40,
+	
+	HeadOffsetY = 1.5,
+	FireAimTolerance = 2.0,
+-- Допуск угла (в пикселях/градусах) перед выстрелом
 
 	---------------------------------------------------------------
 	-- COMBAT
@@ -173,9 +174,7 @@ local function setupCharacter(character)
 		character:WaitForChild("Humanoid")
 
 	Root =
-		character:WaitForChild(
-			"HumanoidRootPart"
-		)
+		character:WaitForChild("HumanoidRootPart")
 
 	Humanoid.AutoRotate = true
 
@@ -192,7 +191,6 @@ local function setupCharacter(character)
 	WaypointIndex = 1
 
 	LastPathDestination = nil
-
 	PatrolDestination = nil
 
 	disableControls()
@@ -202,18 +200,10 @@ local function setupCharacter(character)
 		local camera =
 			Workspace.CurrentCamera
 
-		if not camera then
-			return
+		if camera then
+			camera.CameraType =
+				Enum.CameraType.Custom
 		end
-
-		if camera.CFrame.LookVector.Magnitude > 0.01 then
-
-			CameraForward =
-				camera.CFrame.LookVector.Unit
-		end
-
-		camera.CameraType =
-			Enum.CameraType.Scriptable
 	end)
 
 	print(
@@ -222,7 +212,6 @@ local function setupCharacter(character)
 		Humanoid.WalkSpeed
 	)
 end
-
 ---------------------------------------------------------------------
 -- PLAYER DATA
 ---------------------------------------------------------------------
@@ -592,64 +581,93 @@ local function cameraAngleTo(position)
 	)
 end
 
-local UserInputService = game:GetService("UserInputService")
-
 ---------------------------------------------------------------------
--- STABLE HEAD AIM WITH MICRO-NOISE (HUMANIZED)
+-- CAMERA AIM
 ---------------------------------------------------------------------
 
-local function getAimPosition(character, targetRoot)
-	-- Добавляем микро-шум к точке прицеливания (чтобы не было идеального лока в 1 пиксель)
-	local noiseX = RNG:NextNumber(-0.12, 0.12)
-	local noiseY = RNG:NextNumber(-0.08, 0.08)
-	local noiseZ = RNG:NextNumber(-0.12, 0.12)
+local CAMERA_NAME =
+	"AutoBotCamera"
 
-	return targetRoot.Position + Vector3.new(noiseX, CONFIG.HeadOffsetY + noiseY, noiseZ)
-end
-
----------------------------------------------------------------------
--- BAC-SAFE CAMERA & MOUSE AIMING
----------------------------------------------------------------------
-
-local CAMERA_NAME = "AutoBotStableCamera"
-
-RunService:UnbindFromRenderStep(CAMERA_NAME)
+RunService:UnbindFromRenderStep(
+	CAMERA_NAME
+)
 
 RunService:BindToRenderStep(
+
 	CAMERA_NAME,
+
 	Enum.RenderPriority.Camera.Value + 1,
+
 	function(dt)
-		if not Root or not Humanoid or Humanoid.Health <= 0 then
+
+		if not Root
+			or not Humanoid
+			or Humanoid.Health <= 0 then
+
 			return
 		end
 
-		local camera = Workspace.CurrentCamera
+		if not AimPosition then
+			return
+		end
+
+		local camera =
+			Workspace.CurrentCamera
+
 		if not camera then
 			return
 		end
 
-		-- Возвращаем стандартный режим камеры, чтобы игра сама обрабатывала MouseDelta
-		if camera.CameraType ~= Enum.CameraType.Custom then
-			camera.CameraType = Enum.CameraType.Custom
+		---------------------------------------------------------
+		-- SMOOTH TARGET POSITION
+		---------------------------------------------------------
+
+		if not SmoothedAimPosition then
+
+			SmoothedAimPosition =
+				AimPosition
+
+		else
+
+			local targetAlpha =
+				1
+				- math.exp(
+					-CONFIG.AimPositionSpeed
+					* dt
+				)
+
+			SmoothedAimPosition =
+				SmoothedAimPosition:Lerp(
+					AimPosition,
+					targetAlpha
+				)
 		end
 
-		-- Наводимся только через физическое смещение мыши (mousemoverel)
-		if AimPosition and mousemoverel then
-			local screenPos, onScreen = camera:WorldToViewportPoint(AimPosition)
+		---------------------------------------------------------
+		-- CAMERA -> TARGET
+		---------------------------------------------------------
 
-			if onScreen then
-				local mousePos = UserInputService:GetMouseLocation()
-				local deltaX = screenPos.X - mousePos.X
-				local deltaY = screenPos.Y - mousePos.Y
+		local current =
+			camera.CFrame
 
-				-- Вычисляем плавно движение мыши
-				local moveX = deltaX * CONFIG.AimSmoothness
-				local moveY = deltaY * CONFIG.AimSmoothness
+		local wanted =
+			CFrame.lookAt(
+				current.Position,
+				SmoothedAimPosition
+			)
 
-				-- Передаем реальное движение курсора движку Roblox
-				mousemoverel(moveX, moveY)
-			end
-		end
+		local alpha =
+			1
+				- math.exp(
+					-CONFIG.AimSpeed
+					* dt
+				)
+
+		camera.CFrame =
+			current:Lerp(
+				wanted,
+				alpha
+			)
 	end
 )
 ---------------------------------------------------------------------
