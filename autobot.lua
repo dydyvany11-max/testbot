@@ -1,40 +1,40 @@
 --[[
-    ExecutorBot.lua
+    autobot.lua
 
-    Клиентский AI-бот для собственного Roblox place.
+    Запускать УЖЕ ПОСЛЕ того, как ты:
+      1. Сам выбрал Unranked / Deathmatch / Casual
+      2. Нажал Play
+      3. Выбрал сторону
+      4. Загрузился в матч
 
-    FLOW:
+    После этого бот автоматически:
 
-        EXECUTE
-          ↓
-        MODES
-          ↓
-        выбрать:
-          Unranked
-          Deathmatch
-          Casual
-          ↓
-        Hover
-          ↓
-        Select
-          ↓
-        Play
-          ↓
-        T / CT
-          ↓
-        Spawn
-          ↓
-        Buy
-          ↓
-        Patrol
-          ↓
-        Detection
-          ↓
-        Chase
-          ↓
-        Aim
-          ↓
-        Tool:Activate()
+      - бегает по карте
+      - Pathfinding
+      - ищет противников
+      - проверяет Line Of Sight
+      - наводится
+      - стреляет через текущий Tool
+      - перезаряжается
+      - закупается
+      - открывает награды через N
+      - открывает Home
+      - забирает Hourly/Daily/Weekly/Monthly Claim
+      - обнаруживает конец матча
+      - жмёт Close
+      - ждёт 60 секунд
+      - жмёт Play
+      - выбирает сторону
+      - продолжает играть
+
+    Остановить:
+        getgenv().AutoBot:Stop()
+
+    Запустить снова:
+        getgenv().AutoBot:Start()
+
+    Принудительно забрать награды:
+        getgenv().AutoBot:ClaimRewards()
 ]]
 
 ---------------------------------------------------------------------
@@ -50,23 +50,15 @@ local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
 ---------------------------------------------------------------------
--- GLOBAL ENVIRONMENT
+-- ENVIRONMENT
 ---------------------------------------------------------------------
 
-local ENV =
-    getgenv
-    and getgenv()
-    or _G
+local ENV = getgenv and getgenv() or _G
 
----------------------------------------------------------------------
--- STOP PREVIOUS INSTANCE
----------------------------------------------------------------------
-
-if ENV.ExecutorBot
-    and ENV.ExecutorBot.Stop then
-
+-- При повторном execute выключаем старую версию.
+if ENV.AutoBot and ENV.AutoBot.Stop then
     pcall(function()
-        ENV.ExecutorBot:Stop()
+        ENV.AutoBot:Stop()
     end)
 end
 
@@ -77,78 +69,13 @@ end
 local CONFIG = {
 
     -----------------------------------------------------------------
-    -- GAME MODE
+    -- СТОРОНА
     -----------------------------------------------------------------
 
-    -- "Unranked"
-    -- "Deathmatch"
-    -- "Casual"
-
-    GameMode = "Unranked",
-
-    -----------------------------------------------------------------
-    -- TEAM
-    -----------------------------------------------------------------
-
-    -- "T"
-    -- "CT"
+    -- Используется уже ПОСЛЕ следующего Play.
+    -- "T" или "CT"
 
     PreferredSide = "T",
-
-    -----------------------------------------------------------------
-    -- MENU
-    -----------------------------------------------------------------
-
-    AutoEnterGame = true,
-
-    ModesAliases = {
-        "Modes",
-        "Mode",
-    },
-
-    ModeAliases = {
-
-        Unranked = {
-            "Unranked",
-        },
-
-        Deathmatch = {
-            "Deathmatch",
-            "Death Match",
-        },
-
-        Casual = {
-            "Casual",
-        },
-    },
-
-    SelectAliases = {
-        "Select",
-    },
-
-    PlayAliases = {
-        "Play",
-    },
-
-    TAliases = {
-        "T",
-        "Terrorist",
-        "Terrorists",
-    },
-
-    CTAliases = {
-        "CT",
-        "Counter Terrorist",
-        "Counter-Terrorist",
-        "Counter Terrorists",
-        "Counter-Terrorists",
-    },
-
-    MenuTimeout = 30,
-
-    MenuClickDelay = 0.40,
-
-    HoverDelay = 0.45,
 
     -----------------------------------------------------------------
     -- AI
@@ -180,13 +107,12 @@ local CONFIG = {
 
     PreferHead = true,
 
-    -- 1 = всегда пытается вести в голову.
     HeadAimChance = 0.90,
 
     RotateCharacter = true,
 
     -- Если оружие стреляет туда,
-    -- куда направлена камера.
+    -- куда направлена камера:
     RotateCamera = true,
 
     Prediction = false,
@@ -237,7 +163,7 @@ local CONFIG = {
 
     BuyKey = Enum.KeyCode.B,
 
-    BuyDelayAfterSpawn = 1.2,
+    BuyDelayAfterSpawn = 1.3,
 
     BuyMenuDelay = 0.4,
 
@@ -258,7 +184,7 @@ local CONFIG = {
     },
 
     -----------------------------------------------------------------
-    -- WEAPON EQUIP
+    -- WEAPON PRIORITY
     -----------------------------------------------------------------
 
     WeaponPriority = {
@@ -287,6 +213,98 @@ local CONFIG = {
 
         "Glock",
     },
+
+    -----------------------------------------------------------------
+    -- REWARDS
+    -----------------------------------------------------------------
+
+    AutoClaimRewards = true,
+
+    -- N открывает меню.
+    RewardsKey = Enum.KeyCode.N,
+
+    -- Через сколько секунд после execute
+    -- впервые проверить награды.
+    FirstRewardCheckDelay = 8,
+
+    -- Проверять каждые 5 минут.
+    RewardCheckInterval = 300,
+
+    RewardMenuDelay = 0.6,
+
+    -- После N пытаемся нажать домик/Home.
+    ClickHomeBeforeClaim = true,
+
+    HomeAliases = {
+        "Home",
+        "House",
+        "Main",
+    },
+
+    ClaimAliases = {
+        "Claim",
+        "Collect",
+        "Redeem",
+    },
+
+    RewardAliases = {
+        "Hourly",
+        "Daily",
+        "Weekly",
+        "Monthly",
+    },
+
+    -----------------------------------------------------------------
+    -- MATCH END
+    -----------------------------------------------------------------
+
+    AutoReplay = true,
+
+    -- После Close ждём минуту.
+    MatchEndWait = 60,
+
+    MatchEndCheckInterval = 0.5,
+
+    CloseAliases = {
+        "Close",
+        "Continue",
+    },
+
+    -- Слова, которые помогают понять,
+    -- что Close относится именно к концу матча.
+    ResultAliases = {
+        "Victory",
+        "Defeat",
+        "Winner",
+        "Match",
+        "Results",
+        "Result",
+        "Score",
+        "Map",
+        "MVP",
+    },
+
+    PlayAliases = {
+        "Play",
+    },
+
+    TAliases = {
+        "T",
+        "Terrorist",
+        "Terrorists",
+    },
+
+    CTAliases = {
+        "CT",
+        "Counter Terrorist",
+        "Counter-Terrorist",
+        "Counter Terrorists",
+        "Counter-Terrorists",
+    },
+
+    MenuTimeout = 30,
+
+    MenuClickDelay = 0.4,
 }
 
 ---------------------------------------------------------------------
@@ -306,37 +324,33 @@ Bot.Target = nil
 
 Bot.LastSeenPosition = nil
 Bot.LastSeenTime = 0
-
 Bot.LastDetection = 0
 
 Bot.LastShot = 0
-
 Bot.ShotCounter = 0
-
 Bot.Reloading = false
 
 Bot.PathWaypoints = {}
-
 Bot.PathIndex = 1
 
 Bot.LastPathDestination = nil
-
 Bot.LastPathTime = 0
 
 Bot.SpawnPosition = nil
 
 Bot.PatrolPoints = {}
-
 Bot.PatrolIndex = 1
 
 Bot.RandomPatrolDestination = nil
-
 Bot.NextPatrol = 0
+
+Bot.HandlingMatchEnd = false
+Bot.ClaimingRewards = false
 
 Bot.CharacterConnection = nil
 
 ---------------------------------------------------------------------
--- NORMALIZE
+-- UTIL
 ---------------------------------------------------------------------
 
 local function normalize(value)
@@ -351,7 +365,7 @@ local function normalize(value)
 end
 
 ---------------------------------------------------------------------
--- GUI VISIBLE
+-- GUI VISIBILITY
 ---------------------------------------------------------------------
 
 local function isGuiVisible(object)
@@ -362,7 +376,7 @@ local function isGuiVisible(object)
 
         if current:IsA("GuiObject") then
 
-            if not current.Visible then
+            if current.Visible == false then
                 return false
             end
         end
@@ -374,13 +388,12 @@ local function isGuiVisible(object)
 end
 
 ---------------------------------------------------------------------
--- GET CHARACTER DATA
+-- CHARACTER DATA
 ---------------------------------------------------------------------
 
 local function getPlayerCharacter(player)
 
-    local character =
-        player.Character
+    local character = player.Character
 
     if not character then
         return nil
@@ -396,9 +409,7 @@ local function getPlayerCharacter(player)
             "HumanoidRootPart"
         )
 
-    if not humanoid
-        or not root then
-
+    if not humanoid or not root then
         return nil
     end
 
@@ -410,7 +421,7 @@ local function getPlayerCharacter(player)
 end
 
 ---------------------------------------------------------------------
--- UPDATE LOCAL CHARACTER
+-- LOCAL CHARACTER
 ---------------------------------------------------------------------
 
 function Bot:GetCharacter()
@@ -432,25 +443,16 @@ function Bot:GetCharacter()
             "HumanoidRootPart"
         )
 
-    if not humanoid
-        or not root then
-
+    if not humanoid or not root then
         return false
     end
 
-    self.Character =
-        character
-
-    self.Humanoid =
-        humanoid
-
-    self.Root =
-        root
+    self.Character = character
+    self.Humanoid = humanoid
+    self.Root = root
 
     self.Head =
-        character:FindFirstChild(
-            "Head"
-        )
+        character:FindFirstChild("Head")
 
     return true
 end
@@ -492,11 +494,10 @@ function Bot:ClickButton(button)
     end
 
     -----------------------------------------------------------------
-    -- firesignal если executor поддерживает.
+    -- firesignal
     -----------------------------------------------------------------
 
-    if firesignal
-        and button:IsA("GuiButton") then
+    if firesignal and button:IsA("GuiButton") then
 
         local success =
             pcall(function()
@@ -504,106 +505,33 @@ function Bot:ClickButton(button)
                 firesignal(
                     button.Activated
                 )
-
-                if button:IsA("TextButton")
-                    or button:IsA("ImageButton") then
-
-                    firesignal(
-                        button.MouseButton1Click
-                    )
-                end
             end)
 
         if success then
-
             task.wait(0.05)
-
             return true
         end
     end
 
     -----------------------------------------------------------------
-    -- Mouse input fallback.
+    -- Mouse fallback
     -----------------------------------------------------------------
 
     if not button:IsA("GuiObject") then
         return false
     end
 
-    local position =
+    local pos =
         button.AbsolutePosition
 
     local size =
         button.AbsoluteSize
 
     local x =
-        position.X
-        + size.X / 2
+        pos.X + size.X / 2
 
     local y =
-        position.Y
-        + size.Y / 2
-
-    local success =
-        pcall(function()
-
-            VirtualInputManager:SendMouseMoveEvent(
-                x,
-                y,
-                game
-            )
-
-            task.wait(0.05)
-
-            VirtualInputManager:SendMouseButtonEvent(
-                x,
-                y,
-                0,
-                true,
-                game,
-                0
-            )
-
-            task.wait(0.05)
-
-            VirtualInputManager:SendMouseButtonEvent(
-                x,
-                y,
-                0,
-                false,
-                game,
-                0
-            )
-        end)
-
-    return success
-end
-
----------------------------------------------------------------------
--- HOVER
----------------------------------------------------------------------
-
-function Bot:HoverObject(object)
-
-    if not object
-        or not object:IsA("GuiObject") then
-
-        return false
-    end
-
-    local position =
-        object.AbsolutePosition
-
-    local size =
-        object.AbsoluteSize
-
-    local x =
-        position.X
-        + size.X / 2
-
-    local y =
-        position.Y
-        + size.Y / 2
+        pos.Y + size.Y / 2
 
     return pcall(function()
 
@@ -611,6 +539,28 @@ function Bot:HoverObject(object)
             x,
             y,
             game
+        )
+
+        task.wait(0.03)
+
+        VirtualInputManager:SendMouseButtonEvent(
+            x,
+            y,
+            0,
+            true,
+            game,
+            0
+        )
+
+        task.wait(0.04)
+
+        VirtualInputManager:SendMouseButtonEvent(
+            x,
+            y,
+            0,
+            false,
+            game,
+            0
         )
     end)
 end
@@ -636,53 +586,51 @@ end
 -- GUI MATCH
 ---------------------------------------------------------------------
 
-function Bot:GuiMatches(
-    object,
-    aliases
-)
+function Bot:GuiMatches(object, aliases)
 
-    local name =
-        normalize(
-            object.Name
-        )
+    local objectName =
+        normalize(object.Name)
 
     local text =
-        self:GetGuiText(
-            object
-        )
+        self:GetGuiText(object)
 
     for _, alias in ipairs(aliases) do
 
         local wanted =
             normalize(alias)
 
-        if name == wanted
-            or text == wanted then
+        -------------------------------------------------------------
+        -- Для T/CT не используем partial match,
+        -- иначе "T" совпадёт вообще почти со всем.
+        -------------------------------------------------------------
 
-            return true
-        end
+        if #wanted <= 2 then
 
-        if #wanted >= 3 then
-
-            if string.find(
-                name,
-                wanted,
-                1,
-                true
-            ) then
+            if objectName == wanted
+                or text == wanted then
 
                 return true
             end
 
-            if string.find(
+            continue
+        end
+
+        if objectName == wanted
+            or text == wanted
+            or string.find(
+                objectName,
+                wanted,
+                1,
+                true
+            )
+            or string.find(
                 text,
                 wanted,
                 1,
                 true
             ) then
 
-                return true
-            end
+            return true
         end
     end
 
@@ -690,13 +638,10 @@ function Bot:GuiMatches(
 end
 
 ---------------------------------------------------------------------
--- FIND GUI
+-- FIND GUI BUTTON
 ---------------------------------------------------------------------
 
-function Bot:FindGuiObject(
-    aliases,
-    onlyButtons
-)
+function Bot:FindGuiButton(aliases)
 
     local playerGui =
         LocalPlayer:FindFirstChildOfClass(
@@ -712,23 +657,8 @@ function Bot:FindGuiObject(
             playerGui:GetDescendants()
         ) do
 
-        if onlyButtons then
-
-            if not object:IsA(
-                "GuiButton"
-            ) then
-
-                continue
-            end
-
-        else
-
-            if not object:IsA(
-                "GuiObject"
-            ) then
-
-                continue
-            end
+        if not object:IsA("GuiButton") then
+            continue
         end
 
         if not isGuiVisible(object) then
@@ -748,31 +678,29 @@ function Bot:FindGuiObject(
 end
 
 ---------------------------------------------------------------------
--- WAIT GUI
+-- WAIT BUTTON
 ---------------------------------------------------------------------
 
-function Bot:WaitForGuiObject(
+function Bot:WaitForButton(
     aliases,
-    onlyButtons,
     timeout
 )
 
-    local start =
+    local started =
         os.clock()
 
     while self.Running do
 
-        local object =
-            self:FindGuiObject(
-                aliases,
-                onlyButtons
+        local button =
+            self:FindGuiButton(
+                aliases
             )
 
-        if object then
-            return object
+        if button then
+            return button
         end
 
-        if os.clock() - start
+        if os.clock() - started
             >= timeout then
 
             return nil
@@ -785,407 +713,101 @@ function Bot:WaitForGuiObject(
 end
 
 ---------------------------------------------------------------------
--- OPEN MODES
+-- BUTTON CONTEXT TEXT
 ---------------------------------------------------------------------
 
-function Bot:OpenModes()
+function Bot:GetObjectContextText(object)
 
-    print(
-        "[BOT] Waiting for Modes..."
-    )
+    local textParts = {}
 
-    local button =
-        self:WaitForGuiObject(
-            CONFIG.ModesAliases,
-            true,
-            CONFIG.MenuTimeout
-        )
+    local current = object
 
-    if not button then
+    ---------------------------------------------------------------
+    -- Смотрим несколько родителей вверх.
+    ---------------------------------------------------------------
 
-        warn(
-            "[BOT] Modes button not found"
-        )
+    for _ = 1, 5 do
 
-        return false
-    end
-
-    print(
-        "[BOT] Modes found:",
-        button:GetFullName()
-    )
-
-    self:ClickButton(
-        button
-    )
-
-    task.wait(
-        CONFIG.MenuClickDelay
-    )
-
-    return true
-end
-
----------------------------------------------------------------------
--- CURRENT MODE ALIASES
----------------------------------------------------------------------
-
-function Bot:GetModeAliases()
-
-    return CONFIG.ModeAliases[
-        CONFIG.GameMode
-    ] or {
-        CONFIG.GameMode
-    }
-end
-
----------------------------------------------------------------------
--- FIND MODE
----------------------------------------------------------------------
-
-function Bot:FindModeCard()
-
-    local aliases =
-        self:GetModeAliases()
-
-    local playerGui =
-        LocalPlayer:FindFirstChildOfClass(
-            "PlayerGui"
-        )
-
-    if not playerGui then
-        return nil
-    end
-
-    for _, object
-        in ipairs(
-            playerGui:GetDescendants()
-        ) do
-
-        if not object:IsA(
-            "GuiObject"
-        ) then
-            continue
-        end
-
-        if not isGuiVisible(object) then
-            continue
-        end
-
-        if not self:GuiMatches(
-            object,
-            aliases
-        ) then
-            continue
-        end
-
-        -------------------------------------------------------------
-        -- Ищем крупный parent-контейнер карточки.
-        -------------------------------------------------------------
-
-        local current =
-            object
-
-        local best =
-            object
-
-        for _ = 1, 7 do
-
-            if not current
-                or not current.Parent then
-
-                break
-            end
-
-            if current:IsA(
-                "GuiObject"
-            ) then
-
-                local size =
-                    current.AbsoluteSize
-
-                if size.X >= 100
-                    and size.Y >= 50 then
-
-                    best =
-                        current
-                end
-            end
-
-            current =
-                current.Parent
-        end
-
-        return best
-    end
-
-    return nil
-end
-
----------------------------------------------------------------------
--- SELECT MODE
----------------------------------------------------------------------
-
-function Bot:SelectMode()
-
-    if not self:OpenModes() then
-        return false
-    end
-
-    print(
-        "[BOT] Looking for mode:",
-        CONFIG.GameMode
-    )
-
-    local started =
-        os.clock()
-
-    local card = nil
-
-    while self.Running do
-
-        card =
-            self:FindModeCard()
-
-        if card then
+        if not current then
             break
         end
 
-        if os.clock() - started
-            >= CONFIG.MenuTimeout then
-
-            break
-        end
-
-        task.wait(0.15)
-    end
-
-    if not card then
-
-        warn(
-            "[BOT] Mode card not found:",
-            CONFIG.GameMode
+        table.insert(
+            textParts,
+            normalize(current.Name)
         )
 
-        return false
-    end
+        if current:IsA("TextLabel")
+            or current:IsA("TextButton") then
 
-    print(
-        "[BOT] Mode found:",
-        card:GetFullName()
-    )
-
-    -----------------------------------------------------------------
-    -- HOVER
-    -----------------------------------------------------------------
-
-    self:HoverObject(
-        card
-    )
-
-    task.wait(
-        CONFIG.HoverDelay
-    )
-
-    -----------------------------------------------------------------
-    -- SELECT появляется после hover.
-    -----------------------------------------------------------------
-
-    local selectButton = nil
-
-    local selectStart =
-        os.clock()
-
-    while self.Running
-        and os.clock() - selectStart < 5 do
-
-        self:HoverObject(
-            card
-        )
-
-        selectButton =
-            self:FindGuiObject(
-                CONFIG.SelectAliases,
-                true
+            table.insert(
+                textParts,
+                normalize(current.Text)
             )
-
-        if selectButton then
-            break
         end
 
-        task.wait(0.10)
+        -----------------------------------------------------------
+        -- И текст рядом с кнопкой.
+        -----------------------------------------------------------
+
+        for _, child
+            in ipairs(current:GetDescendants()) do
+
+            if child:IsA("TextLabel")
+                or child:IsA("TextButton") then
+
+                table.insert(
+                    textParts,
+                    normalize(child.Text)
+                )
+            end
+        end
+
+        current = current.Parent
     end
 
-    if not selectButton then
-
-        warn(
-            "[BOT] Select not found"
-        )
-
-        return false
-    end
-
-    print(
-        "[BOT] Clicking Select"
+    return table.concat(
+        textParts,
+        " "
     )
-
-    self:ClickButton(
-        selectButton
-    )
-
-    task.wait(
-        CONFIG.MenuClickDelay
-    )
-
-    return true
 end
 
 ---------------------------------------------------------------------
--- PLAY
+-- CONTEXT HAS WORD
 ---------------------------------------------------------------------
 
-function Bot:ClickPlay()
+function Bot:ContextMatches(
+    object,
+    aliases
+)
 
-    print(
-        "[BOT] Waiting for Play..."
-    )
-
-    local button =
-        self:WaitForGuiObject(
-            CONFIG.PlayAliases,
-            true,
-            CONFIG.MenuTimeout
+    local context =
+        self:GetObjectContextText(
+            object
         )
 
-    if not button then
+    for _, alias
+        in ipairs(aliases) do
 
-        warn(
-            "[BOT] Play not found"
-        )
+        local wanted =
+            normalize(alias)
 
-        return false
+        if string.find(
+            context,
+            wanted,
+            1,
+            true
+        ) then
+
+            return true
+        end
     end
 
-    print(
-        "[BOT] Clicking Play"
-    )
-
-    self:ClickButton(
-        button
-    )
-
-    task.wait(
-        CONFIG.MenuClickDelay
-    )
-
-    return true
+    return false
 end
 
 ---------------------------------------------------------------------
--- TEAM SELECT
----------------------------------------------------------------------
-
-function Bot:SelectTeam()
-
-    local aliases
-
-    if string.upper(
-        CONFIG.PreferredSide
-    ) == "CT" then
-
-        aliases =
-            CONFIG.CTAliases
-
-    else
-
-        aliases =
-            CONFIG.TAliases
-    end
-
-    print(
-        "[BOT] Waiting for team:",
-        CONFIG.PreferredSide
-    )
-
-    local button =
-        self:WaitForGuiObject(
-            aliases,
-            true,
-            CONFIG.MenuTimeout
-        )
-
-    if not button then
-
-        warn(
-            "[BOT] Team button not found"
-        )
-
-        return false
-    end
-
-    print(
-        "[BOT] Selecting:",
-        CONFIG.PreferredSide
-    )
-
-    self:ClickButton(
-        button
-    )
-
-    task.wait(
-        CONFIG.MenuClickDelay
-    )
-
-    return true
-end
-
----------------------------------------------------------------------
--- COMPLETE MENU FLOW
----------------------------------------------------------------------
-
-function Bot:EnterGame()
-
-    if not CONFIG.AutoEnterGame then
-        return true
-    end
-
-    print(
-        "[BOT] Starting menu automation"
-    )
-
-    ---------------------------------------------------------------
-    -- MODES -> MODE -> SELECT
-    ---------------------------------------------------------------
-
-    if not self:SelectMode() then
-        return false
-    end
-
-    ---------------------------------------------------------------
-    -- PLAY
-    ---------------------------------------------------------------
-
-    if not self:ClickPlay() then
-        return false
-    end
-
-    ---------------------------------------------------------------
-    -- TEAM
-    ---------------------------------------------------------------
-
-    if not self:SelectTeam() then
-        return false
-    end
-
-    print(
-        "[BOT] Menu completed"
-    )
-
-    return true
-end
-
----------------------------------------------------------------------
--- IS ENEMY
+-- ENEMY
 ---------------------------------------------------------------------
 
 function Bot:IsEnemy(player)
@@ -1200,8 +822,7 @@ function Bot:IsEnemy(player)
 
     if LocalPlayer.Team
         and player.Team
-        and LocalPlayer.Team
-            == player.Team then
+        and LocalPlayer.Team == player.Team then
 
         return false
     end
@@ -1210,7 +831,7 @@ function Bot:IsEnemy(player)
 end
 
 ---------------------------------------------------------------------
--- RAYCAST PARAMS
+-- RAYCAST
 ---------------------------------------------------------------------
 
 function Bot:GetRaycastParams()
@@ -1222,11 +843,10 @@ function Bot:GetRaycastParams()
         Enum.RaycastFilterType.Exclude
 
     params.FilterDescendantsInstances = {
-        self.Character,
+        self.Character
     }
 
-    params.IgnoreWater =
-        true
+    params.IgnoreWater = true
 
     return params
 end
@@ -1242,23 +862,17 @@ function Bot:GetEyePosition()
     end
 
     return self.Root.Position
-        + Vector3.new(
-            0,
-            2,
-            0
-        )
+        + Vector3.new(0, 2, 0)
 end
 
 ---------------------------------------------------------------------
--- LINE OF SIGHT
+-- LOS
 ---------------------------------------------------------------------
 
 function Bot:CanSee(character)
 
     local target =
-        character:FindFirstChild(
-            "Head"
-        )
+        character:FindFirstChild("Head")
         or character:FindFirstChild(
             "HumanoidRootPart"
         )
@@ -1271,8 +885,7 @@ function Bot:CanSee(character)
         self:GetEyePosition()
 
     local direction =
-        target.Position
-        - origin
+        target.Position - origin
 
     local result =
         Workspace:Raycast(
@@ -1298,9 +911,7 @@ end
 function Bot:FindTarget()
 
     local nearest = nil
-
-    local nearestDistance =
-        math.huge
+    local nearestDistance = math.huge
 
     for _, player
         in ipairs(
@@ -1314,9 +925,7 @@ function Bot:FindTarget()
         local character,
             humanoid,
             root =
-            getPlayerCharacter(
-                player
-            )
+            getPlayerCharacter(player)
 
         if not character then
             continue
@@ -1347,11 +956,8 @@ function Bot:FindTarget()
             continue
         end
 
-        nearest =
-            player
-
-        nearestDistance =
-            distance
+        nearest = player
+        nearestDistance = distance
     end
 
     return nearest
@@ -1380,15 +986,10 @@ function Bot:UpdateDetection()
         return
     end
 
-    self.Target =
-        player
+    self.Target = player
 
-    local _,
-        _,
-        root =
-        getPlayerCharacter(
-            player
-        )
+    local _, _, root =
+        getPlayerCharacter(player)
 
     if root then
 
@@ -1401,12 +1002,10 @@ function Bot:UpdateDetection()
 end
 
 ---------------------------------------------------------------------
--- COMPUTE PATH
+-- PATH
 ---------------------------------------------------------------------
 
-function Bot:ComputePath(
-    destination
-)
+function Bot:ComputePath(destination)
 
     local path =
         PathfindingService:CreatePath({
@@ -1444,16 +1043,10 @@ function Bot:ComputePath(
     self.PathWaypoints =
         path:GetWaypoints()
 
-    if #self.PathWaypoints >= 2 then
-
-        self.PathIndex =
-            2
-
-    else
-
-        self.PathIndex =
-            1
-    end
+    self.PathIndex =
+        #self.PathWaypoints >= 2
+        and 2
+        or 1
 
     self.LastPathDestination =
         destination
@@ -1465,16 +1058,12 @@ function Bot:ComputePath(
 end
 
 ---------------------------------------------------------------------
--- SHOULD REPATH
+-- REPATH
 ---------------------------------------------------------------------
 
-function Bot:NeedsRepath(
-    destination
-)
+function Bot:NeedsRepath(destination)
 
-    if #self.PathWaypoints
-        == 0 then
-
+    if #self.PathWaypoints == 0 then
         return true
     end
 
@@ -1487,14 +1076,10 @@ function Bot:NeedsRepath(
 
     if self.LastPathDestination then
 
-        local moved =
-            (
-                destination
-                - self.LastPathDestination
-            ).Magnitude
-
-        if moved
-            >= CONFIG.RepathDistance then
+        if (
+            destination
+            - self.LastPathDestination
+        ).Magnitude >= CONFIG.RepathDistance then
 
             return true
         end
@@ -1557,16 +1142,11 @@ end
 -- MOVE
 ---------------------------------------------------------------------
 
-function Bot:MoveTo(
-    destination
-)
+function Bot:MoveTo(destination)
 
-    self.Humanoid.AutoRotate =
-        true
+    self.Humanoid.AutoRotate = true
 
-    if self:NeedsRepath(
-        destination
-    ) then
+    if self:NeedsRepath(destination) then
 
         if not self:ComputePath(
             destination
@@ -1584,13 +1164,13 @@ function Bot:MoveTo(
 end
 
 ---------------------------------------------------------------------
--- STOP MOVE
+-- STOP
 ---------------------------------------------------------------------
 
 function Bot:StopMoving()
 
-    if not self.Humanoid
-        or not self.Root then
+    if not self.Root
+        or not self.Humanoid then
 
         return
     end
@@ -1618,13 +1198,9 @@ function Bot:LoadPatrolPoints()
     end
 
     for _, object
-        in ipairs(
-            folder:GetChildren()
-        ) do
+        in ipairs(folder:GetChildren()) do
 
-        if object:IsA(
-            "BasePart"
-        ) then
+        if object:IsA("BasePart") then
 
             table.insert(
                 self.PatrolPoints,
@@ -1637,9 +1213,7 @@ function Bot:LoadPatrolPoints()
         self.PatrolPoints,
 
         function(a, b)
-
-            return a.Name
-                < b.Name
+            return a.Name < b.Name
         end
     )
 end
@@ -1653,40 +1227,24 @@ function Bot:GetRandomDestination()
     local radius =
         CONFIG.RandomPatrolRadius
 
-    local offset =
-        Vector3.new(
-
-            math.random(
-                -radius,
-                radius
-            ),
-
-            0,
-
-            math.random(
-                -radius,
-                radius
-            )
-        )
-
     local base =
         self.SpawnPosition
         or self.Root.Position
 
     local point =
-        base + offset
+        base
+        + Vector3.new(
+            math.random(-radius, radius),
+            0,
+            math.random(-radius, radius)
+        )
 
     local origin =
         point
-        + Vector3.new(
-            0,
-            120,
-            0
-        )
+        + Vector3.new(0, 120, 0)
 
     local result =
         Workspace:Raycast(
-
             origin,
 
             Vector3.new(
@@ -1701,11 +1259,7 @@ function Bot:GetRandomDestination()
     if result then
 
         return result.Position
-            + Vector3.new(
-                0,
-                2,
-                0
-            )
+            + Vector3.new(0, 2, 0)
     end
 
     return point
@@ -1717,6 +1271,12 @@ end
 
 function Bot:Patrol()
 
+    if self.HandlingMatchEnd
+        or self.ClaimingRewards then
+
+        return
+    end
+
     if os.clock()
         < self.NextPatrol then
 
@@ -1724,7 +1284,7 @@ function Bot:Patrol()
     end
 
     ---------------------------------------------------------------
-    -- FIXED POINTS
+    -- ЗАДАННЫЕ ТОЧКИ
     ---------------------------------------------------------------
 
     if #self.PatrolPoints > 0 then
@@ -1736,27 +1296,21 @@ function Bot:Patrol()
 
         if not point then
 
-            self.PatrolIndex =
-                1
-
+            self.PatrolIndex = 1
             return
         end
 
-        local distance =
-            (
-                self.Root.Position
-                - point.Position
-            ).Magnitude
-
-        if distance <= 5 then
+        if (
+            self.Root.Position
+            - point.Position
+        ).Magnitude <= 5 then
 
             self.PatrolIndex += 1
 
             if self.PatrolIndex
                 > #self.PatrolPoints then
 
-                self.PatrolIndex =
-                    1
+                self.PatrolIndex = 1
             end
 
             self.PathWaypoints = {}
@@ -1787,16 +1341,12 @@ function Bot:Patrol()
         self.PathWaypoints = {}
     end
 
-    local distance =
-        (
-            self.Root.Position
-            - self.RandomPatrolDestination
-        ).Magnitude
+    if (
+        self.Root.Position
+        - self.RandomPatrolDestination
+    ).Magnitude <= 6 then
 
-    if distance <= 6 then
-
-        self.RandomPatrolDestination =
-            nil
+        self.RandomPatrolDestination = nil
 
         self.PathWaypoints = {}
 
@@ -1813,7 +1363,7 @@ function Bot:Patrol()
 end
 
 ---------------------------------------------------------------------
--- CURRENT TOOL
+-- TOOL
 ---------------------------------------------------------------------
 
 function Bot:GetCurrentTool()
@@ -1832,14 +1382,10 @@ end
 -- FIND TOOL
 ---------------------------------------------------------------------
 
-function Bot:FindTool(
-    weaponName
-)
+function Bot:FindTool(weaponName)
 
     local wanted =
-        normalize(
-            weaponName
-        )
+        normalize(weaponName)
 
     local function search(parent)
 
@@ -1847,56 +1393,44 @@ function Bot:FindTool(
             return nil
         end
 
-        for _, tool
+        for _, object
             in ipairs(
                 parent:GetChildren()
             ) do
 
-            if tool:IsA("Tool") then
+            if not object:IsA("Tool") then
+                continue
+            end
 
-                local name =
-                    normalize(
-                        tool.Name
-                    )
+            local name =
+                normalize(object.Name)
 
-                if name == wanted
-                    or string.find(
-                        name,
-                        wanted,
-                        1,
-                        true
-                    ) then
+            if name == wanted
+                or string.find(
+                    name,
+                    wanted,
+                    1,
+                    true
+                ) then
 
-                    return tool
-                end
+                return object
             end
         end
 
         return nil
     end
 
-    local equipped =
-        search(
-            self.Character
+    return search(self.Character)
+        or search(
+            LocalPlayer:
+                FindFirstChildOfClass(
+                    "Backpack"
+                )
         )
-
-    if equipped then
-        return equipped
-    end
-
-    local backpack =
-        LocalPlayer:
-            FindFirstChildOfClass(
-                "Backpack"
-            )
-
-    return search(
-        backpack
-    )
 end
 
 ---------------------------------------------------------------------
--- EQUIP BEST WEAPON
+-- EQUIP
 ---------------------------------------------------------------------
 
 function Bot:EquipBestWeapon()
@@ -1905,14 +1439,14 @@ function Bot:EquipBestWeapon()
         return nil
     end
 
-    for _, name
+    for _, weaponName
         in ipairs(
             CONFIG.WeaponPriority
         ) do
 
         local tool =
             self:FindTool(
-                name
+                weaponName
             )
 
         if tool then
@@ -1923,21 +1457,12 @@ function Bot:EquipBestWeapon()
                 pcall(function()
 
                     self.Humanoid:
-                        EquipTool(
-                            tool
-                        )
+                        EquipTool(tool)
                 end)
             end
 
             return tool
         end
-    end
-
-    local current =
-        self:GetCurrentTool()
-
-    if current then
-        return current
     end
 
     local backpack =
@@ -1957,18 +1482,15 @@ function Bot:EquipBestWeapon()
         if tool then
 
             pcall(function()
-
                 self.Humanoid:
-                    EquipTool(
-                        tool
-                    )
+                    EquipTool(tool)
             end)
 
             return tool
         end
     end
 
-    return nil
+    return self:GetCurrentTool()
 end
 
 ---------------------------------------------------------------------
@@ -1980,8 +1502,7 @@ function Bot:GetAimPosition(
     root
 )
 
-    local targetPart =
-        root
+    local part = root
 
     local head =
         character:FindFirstChild(
@@ -1993,16 +1514,11 @@ function Bot:GetAimPosition(
         and math.random()
             <= CONFIG.HeadAimChance then
 
-        targetPart =
-            head
+        part = head
     end
 
     local position =
-        targetPart.Position
-
-    ---------------------------------------------------------------
-    -- SIMPLE PREDICTION
-    ---------------------------------------------------------------
+        part.Position
 
     if CONFIG.Prediction then
 
@@ -2012,13 +1528,12 @@ function Bot:GetAimPosition(
                 - self:GetEyePosition()
             ).Magnitude
 
-        local travelTime =
-            distance
-            / CONFIG.EstimatedBulletSpeed
-
         position +=
             root.AssemblyLinearVelocity
-            * travelTime
+            * (
+                distance
+                / CONFIG.EstimatedBulletSpeed
+            )
     end
 
     return position
@@ -2028,13 +1543,7 @@ end
 -- AIM
 ---------------------------------------------------------------------
 
-function Bot:AimAt(
-    position
-)
-
-    ---------------------------------------------------------------
-    -- CHARACTER
-    ---------------------------------------------------------------
+function Bot:AimAt(position)
 
     if CONFIG.RotateCharacter then
 
@@ -2061,10 +1570,6 @@ function Bot:AimAt(
         end
     end
 
-    ---------------------------------------------------------------
-    -- CAMERA
-    ---------------------------------------------------------------
-
     if CONFIG.RotateCamera
         and Camera then
 
@@ -2086,8 +1591,7 @@ function Bot:Reload()
         return
     end
 
-    self.Reloading =
-        true
+    self.Reloading = true
 
     self:PressKey(
         Enum.KeyCode.R
@@ -2098,15 +1602,8 @@ function Bot:Reload()
 
         function()
 
-            if not Bot then
-                return
-            end
-
-            Bot.Reloading =
-                false
-
-            Bot.ShotCounter =
-                0
+            Bot.Reloading = false
+            Bot.ShotCounter = 0
         end
     )
 end
@@ -2117,7 +1614,10 @@ end
 
 function Bot:Fire()
 
-    if self.Reloading then
+    if self.Reloading
+        or self.HandlingMatchEnd
+        or self.ClaimingRewards then
+
         return
     end
 
@@ -2130,12 +1630,7 @@ function Bot:Fire()
 
     local tool =
         self:GetCurrentTool()
-
-    if not tool then
-
-        tool =
-            self:EquipBestWeapon()
-    end
+        or self:EquipBestWeapon()
 
     if not tool then
         return
@@ -2147,18 +1642,12 @@ function Bot:Fire()
     self.ShotCounter += 1
 
     ---------------------------------------------------------------
-    -- СТРЕЛЬБА ЧЕРЕЗ РЕАЛЬНЫЙ TOOL
+    -- Существующая система оружия.
     ---------------------------------------------------------------
 
     pcall(function()
-
         tool:Activate()
-
     end)
-
-    ---------------------------------------------------------------
-    -- RELOAD
-    ---------------------------------------------------------------
 
     if self.ShotCounter
         >= CONFIG.ReloadEveryShots then
@@ -2168,12 +1657,10 @@ function Bot:Fire()
 end
 
 ---------------------------------------------------------------------
--- FIND BUY BUTTON
+-- BUY BUTTON
 ---------------------------------------------------------------------
 
-function Bot:FindBuyButton(
-    weaponName
-)
+function Bot:FindBuyButton(weaponName)
 
     local playerGui =
         LocalPlayer:
@@ -2186,13 +1673,7 @@ function Bot:FindBuyButton(
     end
 
     local wanted =
-        normalize(
-            weaponName
-        )
-
-    ---------------------------------------------------------------
-    -- Exact first.
-    ---------------------------------------------------------------
+        normalize(weaponName)
 
     for _, object
         in ipairs(
@@ -2206,69 +1687,24 @@ function Bot:FindBuyButton(
             continue
         end
 
-        if not isGuiVisible(
-            object
-        ) then
-
+        if not isGuiVisible(object) then
             continue
         end
 
         local name =
-            normalize(
-                object.Name
-            )
+            normalize(object.Name)
 
         local text =
-            self:GetGuiText(
-                object
-            )
+            self:GetGuiText(object)
 
         if name == wanted
-            or text == wanted then
-
-            return object
-        end
-    end
-
-    ---------------------------------------------------------------
-    -- Partial.
-    ---------------------------------------------------------------
-
-    for _, object
-        in ipairs(
-            playerGui:GetDescendants()
-        ) do
-
-        if not object:IsA(
-            "GuiButton"
-        ) then
-
-            continue
-        end
-
-        if not isGuiVisible(
-            object
-        ) then
-
-            continue
-        end
-
-        local name =
-            normalize(
-                object.Name
+            or text == wanted
+            or string.find(
+                name,
+                wanted,
+                1,
+                true
             )
-
-        local text =
-            self:GetGuiText(
-                object
-            )
-
-        if string.find(
-            name,
-            wanted,
-            1,
-            true
-        )
             or string.find(
                 text,
                 wanted,
@@ -2287,20 +1723,11 @@ end
 -- TRY BUY
 ---------------------------------------------------------------------
 
-function Bot:TryBuyWeapon(
-    weaponName
-)
+function Bot:TryBuyWeapon(weaponName)
 
-    if self:FindTool(
-        weaponName
-    ) then
-
+    if self:FindTool(weaponName) then
         return true
     end
-
-    ---------------------------------------------------------------
-    -- OPEN B
-    ---------------------------------------------------------------
 
     self:PressKey(
         CONFIG.BuyKey
@@ -2310,10 +1737,6 @@ function Bot:TryBuyWeapon(
         CONFIG.BuyMenuDelay
     )
 
-    ---------------------------------------------------------------
-    -- FIND WEAPON BUTTON
-    ---------------------------------------------------------------
-
     local button =
         self:FindBuyButton(
             weaponName
@@ -2321,7 +1744,6 @@ function Bot:TryBuyWeapon(
 
     if not button then
 
-        -- close B
         self:PressKey(
             CONFIG.BuyKey
         )
@@ -2337,15 +1759,11 @@ function Bot:TryBuyWeapon(
         CONFIG.BuyClickDelay
     )
 
-    ---------------------------------------------------------------
-    -- CLOSE B
-    ---------------------------------------------------------------
-
     self:PressKey(
         CONFIG.BuyKey
     )
 
-    task.wait(0.1)
+    task.wait(0.15)
 
     return self:FindTool(
         weaponName
@@ -2365,11 +1783,11 @@ function Bot:AutoBuy()
         return
     end
 
-    print(
-        "[BOT] AutoBuy..."
-    )
+    if self.HandlingMatchEnd then
+        return
+    end
 
-    for _, weapon
+    for _, weaponName
         in ipairs(
             CONFIG.BuyPriority
         ) do
@@ -2378,16 +1796,13 @@ function Bot:AutoBuy()
             return
         end
 
-        local success =
-            self:TryBuyWeapon(
-                weapon
-            )
-
-        if success then
+        if self:TryBuyWeapon(
+            weaponName
+        ) then
 
             print(
-                "[BOT] Bought:",
-                weapon
+                "[AutoBot] bought:",
+                weaponName
             )
 
             break
@@ -2403,32 +1818,26 @@ end
 
 function Bot:ClearTarget()
 
-    self.Target =
-        nil
+    self.Target = nil
 
-    self.LastSeenPosition =
-        nil
+    self.LastSeenPosition = nil
 
     self.PathWaypoints = {}
 
-    self.LastPathDestination =
-        nil
+    self.LastPathDestination = nil
 
     if self.Humanoid then
-
-        self.Humanoid.AutoRotate =
-            true
+        self.Humanoid.AutoRotate = true
     end
 end
 
 ---------------------------------------------------------------------
--- TARGET PROCESS
+-- TARGET
 ---------------------------------------------------------------------
 
 function Bot:ProcessTarget()
 
-    local player =
-        self.Target
+    local player = self.Target
 
     if not player then
         return false
@@ -2437,9 +1846,7 @@ function Bot:ProcessTarget()
     local character,
         humanoid,
         root =
-        getPlayerCharacter(
-            player
-        )
+        getPlayerCharacter(player)
 
     if not character then
 
@@ -2454,16 +1861,11 @@ function Bot:ProcessTarget()
             - self.Root.Position
         ).Magnitude
 
-    local visible =
-        self:CanSee(
-            character
-        )
-
     ---------------------------------------------------------------
     -- VISIBLE
     ---------------------------------------------------------------
 
-    if visible then
+    if self:CanSee(character) then
 
         self.LastSeenPosition =
             root.Position
@@ -2471,31 +1873,19 @@ function Bot:ProcessTarget()
         self.LastSeenTime =
             os.clock()
 
-        -----------------------------------------------------------
-        -- ATTACK RANGE
-        -----------------------------------------------------------
-
         if distance
             <= CONFIG.AttackRange then
 
-            local aimPosition =
+            local aim =
                 self:GetAimPosition(
                     character,
                     root
                 )
 
-            self:AimAt(
-                aimPosition
-            )
-
-            -------------------------------------------------------
-            -- FAR SIDE OF ATTACK RANGE:
-            -- still approach.
-            -------------------------------------------------------
+            self:AimAt(aim)
 
             if distance
-                > CONFIG.AttackRange
-                    * 0.85 then
+                > CONFIG.AttackRange * 0.85 then
 
                 self:MoveTo(
                     root.Position
@@ -2506,18 +1896,10 @@ function Bot:ProcessTarget()
                 self:StopMoving()
             end
 
-            -------------------------------------------------------
-            -- FIRE
-            -------------------------------------------------------
-
             self:Fire()
 
             return true
         end
-
-        -----------------------------------------------------------
-        -- CHASE
-        -----------------------------------------------------------
 
         self:MoveTo(
             root.Position
@@ -2527,7 +1909,7 @@ function Bot:ProcessTarget()
     end
 
     ---------------------------------------------------------------
-    -- LOST BEHIND WALL
+    -- ПОСЛЕДНЯЯ ПОЗИЦИЯ
     ---------------------------------------------------------------
 
     if self.LastSeenPosition
@@ -2542,72 +1924,527 @@ function Bot:ProcessTarget()
         return true
     end
 
-    ---------------------------------------------------------------
-    -- REALLY LOST
-    ---------------------------------------------------------------
-
     self:ClearTarget()
 
     return false
 end
 
 ---------------------------------------------------------------------
--- UPDATE AI
+-- REWARDS
 ---------------------------------------------------------------------
 
-function Bot:Update()
+function Bot:FindClaimButtons()
 
-    if not self.Character
-        or not self.Character.Parent then
+    local found = {}
 
-        return
+    local playerGui =
+        LocalPlayer:
+            FindFirstChildOfClass(
+                "PlayerGui"
+            )
+
+    if not playerGui then
+        return found
     end
 
-    if not self.Humanoid
-        or self.Humanoid.Health <= 0 then
+    for _, object
+        in ipairs(
+            playerGui:GetDescendants()
+        ) do
 
-        return
-    end
+        if not object:IsA(
+            "GuiButton"
+        ) then
 
-    ---------------------------------------------------------------
-    -- SEARCH
-    ---------------------------------------------------------------
+            continue
+        end
 
-    self:UpdateDetection()
+        if not isGuiVisible(object) then
+            continue
+        end
 
-    ---------------------------------------------------------------
-    -- TARGET
-    ---------------------------------------------------------------
+        if not self:GuiMatches(
+            object,
+            CONFIG.ClaimAliases
+        ) then
 
-    if self.Target then
+            continue
+        end
 
-        if self:ProcessTarget() then
-            return
+        -----------------------------------------------------------
+        -- Желательно, чтобы рядом было
+        -- Hourly/Daily/Weekly/Monthly.
+        -----------------------------------------------------------
+
+        if self:ContextMatches(
+            object,
+            CONFIG.RewardAliases
+        ) then
+
+            table.insert(
+                found,
+                object
+            )
         end
     end
 
     ---------------------------------------------------------------
-    -- NO TARGET
+    -- Fallback:
+    -- если не нашли по контексту,
+    -- нажмём видимые Claim.
     ---------------------------------------------------------------
 
-    self:Patrol()
+    if #found == 0 then
+
+        for _, object
+            in ipairs(
+                playerGui:GetDescendants()
+            ) do
+
+            if object:IsA("GuiButton")
+                and isGuiVisible(object)
+                and self:GuiMatches(
+                    object,
+                    CONFIG.ClaimAliases
+                ) then
+
+                table.insert(
+                    found,
+                    object
+                )
+            end
+        end
+    end
+
+    return found
 end
 
 ---------------------------------------------------------------------
--- CHARACTER SPAWN
+-- CLAIM REWARDS
 ---------------------------------------------------------------------
 
-function Bot:CharacterSpawned(
-    character
-)
+function Bot:ClaimRewards()
+
+    if not CONFIG.AutoClaimRewards then
+        return
+    end
+
+    if self.ClaimingRewards
+        or self.HandlingMatchEnd then
+
+        return
+    end
+
+    self.ClaimingRewards = true
+
+    print(
+        "[AutoBot] checking rewards"
+    )
+
+    self:ClearTarget()
+
+    self:StopMoving()
+
+    ---------------------------------------------------------------
+    -- N
+    ---------------------------------------------------------------
+
+    self:PressKey(
+        CONFIG.RewardsKey
+    )
+
+    task.wait(
+        CONFIG.RewardMenuDelay
+    )
+
+    ---------------------------------------------------------------
+    -- HOME / домик
+    ---------------------------------------------------------------
+
+    if CONFIG.ClickHomeBeforeClaim then
+
+        local home =
+            self:FindGuiButton(
+                CONFIG.HomeAliases
+            )
+
+        if home then
+
+            self:ClickButton(home)
+
+            task.wait(0.4)
+        end
+    end
+
+    ---------------------------------------------------------------
+    -- CLAIM ALL
+    ---------------------------------------------------------------
+
+    local buttons =
+        self:FindClaimButtons()
+
+    print(
+        "[AutoBot] claim buttons:",
+        #buttons
+    )
+
+    for _, button
+        in ipairs(buttons) do
+
+        if not self.Running then
+            break
+        end
+
+        if button.Parent
+            and isGuiVisible(button) then
+
+            self:ClickButton(
+                button
+            )
+
+            task.wait(0.25)
+        end
+    end
+
+    ---------------------------------------------------------------
+    -- Закрываем N меню.
+    ---------------------------------------------------------------
+
+    task.wait(0.3)
+
+    self:PressKey(
+        CONFIG.RewardsKey
+    )
+
+    task.wait(0.3)
+
+    self.ClaimingRewards = false
+end
+
+---------------------------------------------------------------------
+-- FIND MATCH-END CLOSE
+---------------------------------------------------------------------
+
+function Bot:FindMatchEndClose()
+
+    local playerGui =
+        LocalPlayer:
+            FindFirstChildOfClass(
+                "PlayerGui"
+            )
+
+    if not playerGui then
+        return nil
+    end
+
+    local viewport =
+        Camera
+        and Camera.ViewportSize
+        or Vector2.new(1920, 1080)
+
+    for _, object
+        in ipairs(
+            playerGui:GetDescendants()
+        ) do
+
+        if not object:IsA(
+            "GuiButton"
+        ) then
+
+            continue
+        end
+
+        if not isGuiVisible(object) then
+            continue
+        end
+
+        if not self:GuiMatches(
+            object,
+            CONFIG.CloseAliases
+        ) then
+
+            continue
+        end
+
+        -----------------------------------------------------------
+        -- Вариант №1:
+        -- рядом есть Results/Victory/Defeat/etc.
+        -----------------------------------------------------------
+
+        if self:ContextMatches(
+            object,
+            CONFIG.ResultAliases
+        ) then
+
+            return object
+        end
+
+        -----------------------------------------------------------
+        -- Вариант №2:
+        -- Close справа снизу.
+        -----------------------------------------------------------
+
+        local pos =
+            object.AbsolutePosition
+
+        if pos.X
+            > viewport.X * 0.55
+            and pos.Y
+            > viewport.Y * 0.55 then
+
+            return object
+        end
+    end
+
+    return nil
+end
+
+---------------------------------------------------------------------
+-- SELECT SIDE
+---------------------------------------------------------------------
+
+function Bot:SelectSide()
+
+    local aliases
+
+    if string.upper(
+        CONFIG.PreferredSide
+    ) == "CT" then
+
+        aliases =
+            CONFIG.CTAliases
+
+    else
+
+        aliases =
+            CONFIG.TAliases
+    end
+
+    print(
+        "[AutoBot] waiting team:",
+        CONFIG.PreferredSide
+    )
+
+    local button =
+        self:WaitForButton(
+            aliases,
+            CONFIG.MenuTimeout
+        )
+
+    if not button then
+
+        warn(
+            "[AutoBot] team button not found"
+        )
+
+        return false
+    end
+
+    self:ClickButton(
+        button
+    )
+
+    print(
+        "[AutoBot] selected:",
+        CONFIG.PreferredSide
+    )
+
+    return true
+end
+
+---------------------------------------------------------------------
+-- PLAY AGAIN
+---------------------------------------------------------------------
+
+function Bot:PlayAgain()
+
+    print(
+        "[AutoBot] waiting for Play"
+    )
+
+    local play =
+        self:WaitForButton(
+            CONFIG.PlayAliases,
+            CONFIG.MenuTimeout
+        )
+
+    if not play then
+
+        warn(
+            "[AutoBot] Play not found"
+        )
+
+        return false
+    end
+
+    self:ClickButton(play)
+
+    print(
+        "[AutoBot] Play clicked"
+    )
+
+    task.wait(
+        CONFIG.MenuClickDelay
+    )
+
+    return self:SelectSide()
+end
+
+---------------------------------------------------------------------
+-- HANDLE MATCH END
+---------------------------------------------------------------------
+
+function Bot:HandleMatchEnd(closeButton)
+
+    if self.HandlingMatchEnd then
+        return
+    end
+
+    self.HandlingMatchEnd = true
+
+    self:ClearTarget()
+
+    self:StopMoving()
+
+    print(
+        "[AutoBot] match finished"
+    )
+
+    ---------------------------------------------------------------
+    -- CLOSE
+    ---------------------------------------------------------------
+
+    if closeButton
+        and closeButton.Parent then
+
+        self:ClickButton(
+            closeButton
+        )
+    end
+
+    print(
+        "[AutoBot] Close clicked"
+    )
+
+    ---------------------------------------------------------------
+    -- Ждём минуту.
+    ---------------------------------------------------------------
+
+    for _ = 1, CONFIG.MatchEndWait do
+
+        if not self.Running then
+
+            self.HandlingMatchEnd =
+                false
+
+            return
+        end
+
+        task.wait(1)
+    end
+
+    ---------------------------------------------------------------
+    -- PLAY → SIDE
+    ---------------------------------------------------------------
+
+    if self.Running then
+
+        self:PlayAgain()
+    end
+
+    self.HandlingMatchEnd =
+        false
+end
+
+---------------------------------------------------------------------
+-- MATCH END MONITOR
+---------------------------------------------------------------------
+
+function Bot:StartMatchEndMonitor()
+
+    task.spawn(function()
+
+        while Bot.Running do
+
+            if CONFIG.AutoReplay
+                and not Bot.HandlingMatchEnd
+                and not Bot.ClaimingRewards then
+
+                local close =
+                    Bot:FindMatchEndClose()
+
+                if close then
+
+                    task.spawn(function()
+
+                        Bot:HandleMatchEnd(
+                            close
+                        )
+                    end)
+                end
+            end
+
+            task.wait(
+                CONFIG.MatchEndCheckInterval
+            )
+        end
+    end)
+end
+
+---------------------------------------------------------------------
+-- REWARD LOOP
+---------------------------------------------------------------------
+
+function Bot:StartRewardLoop()
+
+    if not CONFIG.AutoClaimRewards then
+        return
+    end
+
+    task.spawn(function()
+
+        task.wait(
+            CONFIG.FirstRewardCheckDelay
+        )
+
+        while Bot.Running do
+
+            if not Bot.HandlingMatchEnd then
+
+                pcall(function()
+                    Bot:ClaimRewards()
+                end)
+            end
+
+            local remaining =
+                CONFIG.RewardCheckInterval
+
+            while remaining > 0
+                and Bot.Running do
+
+                local chunk =
+                    math.min(
+                        5,
+                        remaining
+                    )
+
+                task.wait(chunk)
+
+                remaining -= chunk
+            end
+        end
+    end)
+end
+
+---------------------------------------------------------------------
+-- CHARACTER SPAWNED
+---------------------------------------------------------------------
+
+function Bot:CharacterSpawned(character)
 
     if not self.Running then
         return
     end
-
-    ---------------------------------------------------------------
-    -- Wait character.
-    ---------------------------------------------------------------
 
     character:WaitForChild(
         "Humanoid",
@@ -2622,45 +2459,34 @@ function Bot:CharacterSpawned(
     task.wait(0.4)
 
     if not self:GetCharacter() then
-
-        warn(
-            "[BOT] Character initialization failed"
-        )
-
         return
     end
 
     print(
-        "[BOT] Character spawned"
+        "[AutoBot] spawned"
     )
 
     self.SpawnPosition =
         self.Root.Position
 
-    self.Target =
-        nil
+    self.Target = nil
 
-    self.LastSeenPosition =
-        nil
+    self.LastSeenPosition = nil
 
     self.PathWaypoints = {}
 
-    self.LastPathDestination =
-        nil
+    self.LastPathDestination = nil
 
-    self.RandomPatrolDestination =
-        nil
+    self.RandomPatrolDestination = nil
 
-    self.ShotCounter =
-        0
+    self.ShotCounter = 0
 
-    self.Reloading =
-        false
+    self.Reloading = false
 
     self:LoadPatrolPoints()
 
     ---------------------------------------------------------------
-    -- BUY
+    -- BUY AFTER SPAWN
     ---------------------------------------------------------------
 
     task.spawn(function()
@@ -2670,14 +2496,53 @@ function Bot:CharacterSpawned(
         )
 
         if not Bot.Running
-            or not Bot.Humanoid
-            or Bot.Humanoid.Health <= 0 then
+            or Bot.HandlingMatchEnd then
 
             return
         end
 
-        Bot:AutoBuy()
+        if Bot.Humanoid
+            and Bot.Humanoid.Health > 0 then
+
+            Bot:AutoBuy()
+        end
     end)
+end
+
+---------------------------------------------------------------------
+-- MAIN AI UPDATE
+---------------------------------------------------------------------
+
+function Bot:Update()
+
+    if self.HandlingMatchEnd
+        or self.ClaimingRewards then
+
+        return
+    end
+
+    if not self.Character
+        or not self.Character.Parent then
+
+        return
+    end
+
+    if not self.Humanoid
+        or self.Humanoid.Health <= 0 then
+
+        return
+    end
+
+    self:UpdateDetection()
+
+    if self.Target then
+
+        if self:ProcessTarget() then
+            return
+        end
+    end
+
+    self:Patrol()
 end
 
 ---------------------------------------------------------------------
@@ -2690,33 +2555,27 @@ function Bot:Start()
         return
     end
 
-    self.Running =
-        true
+    self.Running = true
 
     print(
-        "==============================="
+        "================================"
     )
 
     print(
-        "[BOT] START"
+        "[AutoBot] STARTED"
     )
 
     print(
-        "[BOT] Mode:",
-        CONFIG.GameMode
-    )
-
-    print(
-        "[BOT] Team:",
+        "[AutoBot] Side:",
         CONFIG.PreferredSide
     )
 
     print(
-        "==============================="
+        "================================"
     )
 
     ---------------------------------------------------------------
-    -- RESPAWN EVENT
+    -- RESPAWN
     ---------------------------------------------------------------
 
     self.CharacterConnection =
@@ -2736,48 +2595,21 @@ function Bot:Start()
             end)
 
     ---------------------------------------------------------------
-    -- MENU FLOW
+    -- CURRENT CHARACTER
     ---------------------------------------------------------------
 
-    task.spawn(function()
+    if LocalPlayer.Character then
 
-        if CONFIG.AutoEnterGame then
-
-            local success =
-                Bot:EnterGame()
-
-            if not success then
-
-                warn(
-                    "[BOT] Menu automation failed"
-                )
-
-                return
-            end
-        end
-
-        -----------------------------------------------------------
-        -- Возможно character уже появился ДО event.
-        -----------------------------------------------------------
-
-        task.wait(0.5)
-
-        local character =
-            LocalPlayer.Character
-
-        if character
-            and character:FindFirstChild(
-                "HumanoidRootPart"
-            ) then
+        task.spawn(function()
 
             Bot:CharacterSpawned(
-                character
+                LocalPlayer.Character
             )
-        end
-    end)
+        end)
+    end
 
     ---------------------------------------------------------------
-    -- AI LOOP
+    -- AI
     ---------------------------------------------------------------
 
     task.spawn(function()
@@ -2793,7 +2625,7 @@ function Bot:Start()
             if not success then
 
                 warn(
-                    "[BOT AI ERROR]",
+                    "[AutoBot AI]",
                     err
                 )
             end
@@ -2803,6 +2635,18 @@ function Bot:Start()
             )
         end
     end)
+
+    ---------------------------------------------------------------
+    -- REWARDS
+    ---------------------------------------------------------------
+
+    self:StartRewardLoop()
+
+    ---------------------------------------------------------------
+    -- MATCH END
+    ---------------------------------------------------------------
+
+    self:StartMatchEndMonitor()
 end
 
 ---------------------------------------------------------------------
@@ -2811,8 +2655,7 @@ end
 
 function Bot:Stop()
 
-    self.Running =
-        false
+    self.Running = false
 
     self:ClearTarget()
 
@@ -2821,8 +2664,7 @@ function Bot:Stop()
         self.CharacterConnection:
             Disconnect()
 
-        self.CharacterConnection =
-            nil
+        self.CharacterConnection = nil
     end
 
     if self.Humanoid
@@ -2840,7 +2682,7 @@ function Bot:Stop()
     end
 
     print(
-        "[BOT] STOPPED"
+        "[AutoBot] STOPPED"
     )
 end
 
@@ -2848,8 +2690,7 @@ end
 -- EXPORT
 ---------------------------------------------------------------------
 
-ENV.ExecutorBot =
-    Bot
+ENV.AutoBot = Bot
 
 ---------------------------------------------------------------------
 -- START
