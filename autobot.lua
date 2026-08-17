@@ -1103,54 +1103,54 @@ local function fireWeapon(
 end
 
 ---------------------------------------------------------------------
--- UPDATE TARGETS
----------------------------------------------------------------------
-
 local function updateTargets()
 
-	local now =
-		os.clock()
+	local now = os.clock()
 
-	if now - LastDetection
-		< CONFIG.DetectionInterval then
-
+	if now - LastDetection < CONFIG.DetectionInterval then
 		return
 	end
 
-	LastDetection =
-		now
+	LastDetection = now
 
-	---------------------------------------------------------------
-	-- MAIN CHASE TARGET
-	---------------------------------------------------------------
+	-----------------------------------------------------------------
+	-- 1. ИЩЕМ БЛИЖАЙШЕГО ВИДИМОГО ПРОТИВНИКА
+	-----------------------------------------------------------------
 
-	if not targetValid(
-		ChaseTarget
-	) then
+	local visibleTarget, visibleDistance =
+		findVisibleThreat()
 
-		ChaseTarget =
-			findNearestEnemy()
+	-----------------------------------------------------------------
+	-- 2. КОГО-ТО ВИДИМ -> СРАЗУ ПЕРЕКЛЮЧАЕМ COMBAT TARGET
+	-----------------------------------------------------------------
 
-		Waypoints = {}
-	end
+	if visibleTarget then
 
-	---------------------------------------------------------------
-	-- AIM AT CHASE TARGET EVEN THROUGH WALL
-	---------------------------------------------------------------
+		if CombatTarget ~= visibleTarget then
 
-	if targetValid(
-		ChaseTarget
-	) then
+			CombatTarget = visibleTarget
+
+			FiringStance = false
+			AimSettlingSince = nil
+
+			-- ВАЖНО:
+			-- SmoothedAimPosition НЕ ОБНУЛЯЕМ,
+			-- иначе камера будет резко прыгать между целями.
+
+			Waypoints = {}
+		end
+
+		-------------------------------------------------------------
+		-- AIM НА ТЕКУЩУЮ ВИДИМУЮ ЦЕЛЬ
+		-------------------------------------------------------------
 
 		local character,
-			humanoid,
+			targetHumanoid,
 			targetRoot =
-			getPlayerData(
-				ChaseTarget
-			)
+			getPlayerData(CombatTarget)
 
 		if character
-			and humanoid
+			and targetHumanoid
 			and targetRoot then
 
 			AimPosition =
@@ -1159,121 +1159,58 @@ local function updateTargets()
 					targetRoot
 				)
 		end
-	end
-
-	---------------------------------------------------------------
-	-- CURRENT COMBAT TARGET
-	---------------------------------------------------------------
-
-	local currentVisible =
-		false
-
-	local currentDistance =
-		math.huge
-
-	if targetValid(
-		CombatTarget
-	) then
-
-		local character =
-			CombatTarget.Character
-
-		if character
-			and canSee(character) then
-
-			currentVisible =
-				true
-
-			currentDistance =
-				distanceTo(
-					CombatTarget
-				)
-		end
-	end
-
-	---------------------------------------------------------------
-	-- NEW DIRECT CONTACT
-	---------------------------------------------------------------
-
-	local threat,
-		threatDistance =
-		findVisibleThreat()
-
-	if threat then
-
-		local shouldSwitch =
-			false
-
-		if not currentVisible then
-
-			shouldSwitch =
-				true
-
-		elseif threat
-			~= CombatTarget
-			and now
-				- LastThreatSwitch
-				>= CONFIG.ThreatSwitchCooldown
-			and threatDistance
-				+ CONFIG.ThreatSwitchMargin
-				< currentDistance then
-
-			shouldSwitch =
-				true
-		end
-
-		if shouldSwitch then
-
-			CombatTarget =
-				threat
-
-			LastThreatSwitch =
-				now
-
-			FiringStance =
-				false
-
-			AimSettlingSince =
-				nil
-
-			SmoothedAimPosition =
-				nil
-
-			Waypoints = {}
-		end
 
 		return
 	end
 
-	---------------------------------------------------------------
-	-- MAIN TARGET VISIBLE
-	---------------------------------------------------------------
+	-----------------------------------------------------------------
+	-- 3. ВИДИМОЙ ЦЕЛИ БОЛЬШЕ НЕТ
+	-----------------------------------------------------------------
 
-	if not currentVisible then
+	CombatTarget = nil
 
-		CombatTarget =
-			nil
+	FiringStance = false
+	AimSettlingSince = nil
 
-		if targetValid(
-			ChaseTarget
-		) then
+	-----------------------------------------------------------------
+	-- 4. ПРОВЕРЯЕМ ОСНОВНУЮ ЦЕЛЬ ДЛЯ ПРЕСЛЕДОВАНИЯ
+	-----------------------------------------------------------------
 
-			local character =
-				ChaseTarget.Character
+	if not targetValid(ChaseTarget) then
 
-			if character
-				and canSee(character) then
+		ChaseTarget =
+			findNearestEnemy()
 
-				CombatTarget =
-					ChaseTarget
+		Waypoints = {}
+	end
 
-				FiringStance =
-					false
+	-----------------------------------------------------------------
+	-- 5. ЕСЛИ ЕСТЬ CHASE TARGET —
+	-- ДЕРЖИМ AIM В ЕГО СТОРОНУ ДАЖЕ ЧЕРЕЗ СТЕНУ
+	-----------------------------------------------------------------
 
-				AimSettlingSince =
-					nil
-			end
+	if targetValid(ChaseTarget) then
+
+		local character,
+			targetHumanoid,
+			targetRoot =
+			getPlayerData(ChaseTarget)
+
+		if character
+			and targetHumanoid
+			and targetRoot then
+
+			AimPosition =
+				getAimPosition(
+					character,
+					targetRoot
+				)
 		end
+
+	else
+
+		ChaseTarget = nil
+		AimPosition = nil
 	end
 end
 
