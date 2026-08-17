@@ -34,26 +34,26 @@ local CONFIG = {
 	ThreatSwitchMargin = 15,
 
 	---------------------------------------------------------------
-	-- PRO AIM CONFIG
+	-- SAFE AIM (BAC SAFE)
 	---------------------------------------------------------------
 
-	AimSmoothness = 0.65,    -- Агрессивная скорость флика (0.5 - 0.85)
-	AimAccelRatio = 1.35,    -- Коэффициент ускорения при далеком прицеле
-	HeadOffsetY = 1.50,
+	AimSmoothness = 0.22, -- Сглаживание (чем меньше, тем плавнее наведение)
+	HeadOffsetY = 1.45,    -- Высота головы
 
-	PredictionTime = 0.045,  -- Упреждение движения цели в секундах
-
-	FireAimTolerance = 12.0, -- Допуск угла в пикселях (стреляет почти мгновенно)
+	FireAimTolerance = 4.0, -- Допуск угла (в пикселях/градусах) перед выстрелом
 
 	---------------------------------------------------------------
-	-- COMBAT TIMINGS
+	-- COMBAT
 	---------------------------------------------------------------
 
-	StopToShootDistance = 120,
-	ResumeChaseDistance = 140,
+	AttackRange = 350,
 
-	AimSettleTime = 0.01,    -- Нулевая задержка реакции
-	FireDelay = 0.055,       -- Максимальный темп стрельбы
+	StopToShootDistance = 60,
+	ResumeChaseDistance = 78,
+
+	AimSettleTime = 0.06, -- Задержка реакции перед выстрелом
+	FireDelay = 0.09,     -- Задержка между выстрелами
+
 	---------------------------------------------------------------
 	-- PATH & PATROL
 	---------------------------------------------------------------
@@ -516,21 +516,17 @@ end
 -- STABLE HEAD AIM
 ---------------------------------------------------------------------
 
----------------------------------------------------------------------
--- PRO AIM: PREDICTIVE HEAD POSITION
----------------------------------------------------------------------
+local function getAimPosition(
+	character,
+	targetRoot
+)
 
-local function getAimPosition(character, targetRoot)
-	local head = character:FindFirstChild("Head") or targetRoot
-	local headPos = head.Position
-
-	-- Считываем вектор скорости движения цели
-	local velocity = targetRoot.AssemblyLinearVelocity or targetRoot.Velocity or Vector3.zero
-
-	-- Вычисляем упреждение (расчет позиции в будущем)
-	local predictedPosition = headPos + (velocity * CONFIG.PredictionTime)
-
-	return predictedPosition
+	return targetRoot.Position
+		+ Vector3.new(
+			0,
+			CONFIG.HeadOffsetY,
+			0
+		)
 end
 
 ---------------------------------------------------------------------
@@ -588,11 +584,6 @@ end
 -- BAC-SAFE CAMERA & MOUSE AIMING
 ---------------------------------------------------------------------
 
----------------------------------------------------------------------
--- PRO AIM: DYNAMIC FLICK & TRACKING
----------------------------------------------------------------------
-
-local UserInputService = game:GetService("UserInputService")
 local CAMERA_NAME = "AutoBotStableCamera"
 
 RunService:UnbindFromRenderStep(CAMERA_NAME)
@@ -610,10 +601,12 @@ RunService:BindToRenderStep(
 			return
 		end
 
+		-- Возвращаем стандартный режим камеры, чтобы игра сама обрабатывала MouseDelta
 		if camera.CameraType ~= Enum.CameraType.Custom then
 			camera.CameraType = Enum.CameraType.Custom
 		end
 
+		-- Наводимся только через физическое смещение мыши (mousemoverel)
 		if AimPosition and mousemoverel then
 			local screenPos, onScreen = camera:WorldToViewportPoint(AimPosition)
 
@@ -622,18 +615,11 @@ RunService:BindToRenderStep(
 				local deltaX = screenPos.X - mousePos.X
 				local deltaY = screenPos.Y - mousePos.Y
 
-				local distance = math.sqrt(deltaX^2 + deltaY^2)
+				-- Вычисляем плавно движение мыши
+				local moveX = deltaX * CONFIG.AimSmoothness
+				local moveY = deltaY * CONFIG.AimSmoothness
 
-				-- Динамический коэффициент: дальний флик делаем быстрее, микро-доводку точнее
-				local speedFactor = CONFIG.AimSmoothness
-				if distance > 40 then
-					speedFactor = math.min(0.95, CONFIG.AimSmoothness * CONFIG.AimAccelRatio)
-				end
-
-				local moveX = deltaX * speedFactor
-				local moveY = deltaY * speedFactor
-
-				-- Применяем мгновенное физическое смещение
+				-- Передаем реальное движение курсора движку Roblox
 				mousemoverel(moveX, moveY)
 			end
 		end
@@ -962,8 +948,6 @@ end
 ---------------------------------------------------------------------
 local FiringInProgress = false
 
-local FiringInProgress = false
-
 local function performFire()
 	if FiringInProgress then
 		return false
@@ -972,7 +956,8 @@ local function performFire()
 	FiringInProgress = true
 
 	task.spawn(function()
-		local pressDuration = math.random(10, 20) / 1000
+		-- Время удержания кнопки выстрела пальцем (30-55 мс)
+		local pressDuration = math.random(30, 55) / 1000
 
 		if mouse1press and mouse1release then
 			mouse1press()
@@ -989,7 +974,10 @@ local function performFire()
 			end
 		end
 
-		task.wait(CONFIG.FireDelay)
+		-- Задержка перед следующим выстрелом с рандомизацией
+		local cooldown = CONFIG.FireDelay + (math.random(-10, 15) / 1000)
+		task.wait(math.max(0.03, cooldown))
+
 		FiringInProgress = false
 	end)
 
