@@ -87,6 +87,60 @@ local CombatTarget = nil
 local LastDetection = 0
 local LastThreatSwitch = 0
 
+
+---------------------------------------------------------------------
+-- TARGETS
+---------------------------------------------------------------------
+
+local ChaseTarget = nil
+local CombatTarget = nil
+
+local LastDetection = 0
+local LastThreatSwitch = 0
+
+---------------------------------------------------------------------
+-- SILENT AIM HOOK
+---------------------------------------------------------------------
+
+local mt = getrawmetatable(game)
+local oldNamecall = mt.__namecall
+setreadonly(mt, false)
+
+mt.__namecall = newcclosure(function(self, ...)
+	local method = getnamecallmethod()
+	local args = { ... }
+
+	if method == "Raycast" or method == "raycast" then
+		if CombatTarget and CombatTarget.Character then
+			local head = CombatTarget.Character:FindFirstChild("Head")
+			if head then
+				local origin = args[1]
+				args[2] = (head.Position - origin).Unit * 1000
+				return oldNamecall(self, unpack(args))
+			end
+		end
+	end
+
+	if method == "FireServer" and tostring(self):lower():find("shoot") then
+		if CombatTarget and CombatTarget.Character then
+			local head = CombatTarget.Character:FindFirstChild("Head")
+			if head then
+				for i, arg in ipairs(args) do
+					if typeof(arg) == "Vector3" then
+						args[i] = head.Position
+					elseif typeof(arg) == "Instance" and arg:IsA("BasePart") then
+						args[i] = head
+					end
+				end
+				return oldNamecall(self, unpack(args))
+			end
+		end
+	end
+
+	return oldNamecall(self, ...)
+end)
+
+setreadonly(mt, true)
 ---------------------------------------------------------------------
 -- AIM
 ---------------------------------------------------------------------
@@ -949,39 +1003,11 @@ end
 local FiringInProgress = false
 
 local function performFire()
-	if FiringInProgress then
-		return false
-	end
-
-	FiringInProgress = true
-
-	task.spawn(function()
-		-- Время удержания кнопки выстрела пальцем (30-55 мс)
-		local pressDuration = math.random(30, 55) / 1000
-
-		if mouse1press and mouse1release then
-			mouse1press()
-			task.wait(pressDuration)
-			mouse1release()
-		elseif mouse1click then
-			mouse1click()
-		else
-			local VIM = game:GetService("VirtualInputManager")
-			if VIM then
-				VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0)
-				task.wait(pressDuration)
-				VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
-			end
-		end
-
-		-- Задержка перед следующим выстрелом с рандомизацией
-		local cooldown = CONFIG.FireDelay + (math.random(-10, 15) / 1000)
-		task.wait(math.max(0.03, cooldown))
-
-		FiringInProgress = false
-	end)
-
-	return true
+    pcall(function()
+        -- Используем локальный IP компьютера в сети вместо localhost
+        game:HttpGet("http://10.0.2.2:8080/fire")
+    end)
+    return true
 end
 	-----------------------------------------------------------------
 	-- >>> FIRE HOOK <<<
