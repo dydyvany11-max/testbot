@@ -1026,17 +1026,25 @@ end
 ---------------------------------------------------------------------
 
 local function performFire()
-	local tool = getEquippedTool() or equipTool()
-	if not tool then return false end
+	-- 1. Если есть функции экзекутора (mouse1press / mouse1release)
+	if mouse1press and mouse1release then
+		mouse1press()
+		task.delay(CONFIG.FireDelay or 0.08, function()
+			mouse1release()
+		end)
+		return true
+	end
 
-	-- Ищем RemoteEvent внутри оружия или ReplicatedStorage
-	local shootRemote = tool:FindFirstChild("Shoot") 
-		or tool:FindFirstChild("RemoteEvent")
-		or game:GetService("ReplicatedStorage"):FindFirstChild("ShootRemote")
-
-	if shootRemote and shootRemote:IsA("RemoteEvent") then
-		-- Передаем параметры, которые ожидает игра (обычно позиция/направление)
-		shootRemote:FireServer(AimPosition)
+	-- 2. Запасной вариант через встроенный VirtualInputManager
+	local VIM = game:GetService("VirtualInputManager")
+	if VIM then
+		-- Нажатие ЛКМ (Button1)
+		VIM:SendMouseButtonEvent(0, 0, 0, true, game, 0)
+		
+		task.delay(CONFIG.FireDelay or 0.08, function()
+			-- Отпускание ЛКМ
+			VIM:SendMouseButtonEvent(0, 0, 0, false, game, 0)
+		end)
 		return true
 	end
 
