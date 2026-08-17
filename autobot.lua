@@ -14,7 +14,7 @@ local LocalPlayer = Players.LocalPlayer
 
 ---------------------------------------------------------------------
 -- CONFIG
----------------------------------------------------------------------
+
 
 local CONFIG = {
 
@@ -176,7 +176,7 @@ local function setupCharacter(character)
 	Root =
 		character:WaitForChild("HumanoidRootPart")
 
-	Humanoid.AutoRotate = true
+	Humanoid.AutoRotate = false
 
 	ChaseTarget = nil
 	CombatTarget = nil
@@ -856,7 +856,7 @@ local function directMove(destination)
 		return
 	end
 
-	Humanoid.AutoRotate = true
+	Humanoid.AutoRotate = false
 
 	Humanoid:Move(
 		flat.Unit,
@@ -930,7 +930,7 @@ local function followPath()
 
 	if flat.Magnitude > 0.05 then
 
-		Humanoid.AutoRotate = true
+		Humanoid.AutoRotate = false
 
 		Humanoid:Move(
 			flat.Unit,
