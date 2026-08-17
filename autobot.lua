@@ -1026,47 +1026,21 @@ end
 ---------------------------------------------------------------------
 
 local function performFire()
+	local tool = getEquippedTool() or equipTool()
+	if not tool then return false end
 
-	local tool =
-		getEquippedTool()
-		or equipTool()
+	-- Ищем RemoteEvent внутри оружия или ReplicatedStorage
+	local shootRemote = tool:FindFirstChild("Shoot") 
+		or tool:FindFirstChild("RemoteEvent")
+		or game:GetService("ReplicatedStorage"):FindFirstChild("ShootRemote")
 
-	if not tool then
-		return false
+	if shootRemote and shootRemote:IsA("RemoteEvent") then
+		-- Передаем параметры, которые ожидает игра (обычно позиция/направление)
+		shootRemote:FireServer(AimPosition)
+		return true
 	end
 
-	-----------------------------------------------------------------
-	-- >>> FIRE HOOK <<<
-	--
-	-- Симуляция клика левой кнопкой мыши (LMB)
-	-----------------------------------------------------------------
-
-	-- Проверяем наличие функций экзекутора для мыши
-	if mouse1press and mouse1release then
-		
-		-- Зажимаем ЛКМ
-		mouse1press()
-		
-		-- Отпускаем через небольшую задержку
-		task.delay(0.025, function()
-			mouse1release()
-		end)
-		
-	elseif mouse1click then
-		
-		-- Если есть только быстрый клик
-		mouse1click()
-		
-	else
-		-- Запасной вариант через VirtualUser (если нет экзекутора)
-		local VirtualUser = game:GetService("VirtualUser")
-		
-		pcall(function()
-			VirtualUser:ClickButton1(Vector2.new(0, 0))
-		end)
-	end
-
-	return true
+	return false
 end
 
 	-----------------------------------------------------------------
