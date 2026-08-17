@@ -21,7 +21,7 @@ local CONFIG = {
 	ThinkInterval = 0.025,
 	DetectionInterval = 0.04,
 
-	TeamCheck = true,
+	TeamCheck = false,
 
 	---------------------------------------------------------------
 	-- SEARCH / CHASE
@@ -1367,79 +1367,17 @@ local function processChaseTarget(player)
 	return true
 end
 
----------------------------------------------------------------------
--- MAIN
----------------------------------------------------------------------
-
 task.spawn(function()
-
 	while true do
-
-		if Character
-			and Character.Parent
-			and Humanoid
-			and Root
-			and Humanoid.Health > 0 then
-
-			local success, err =
-				pcall(function()
-
-					updateTargets()
-
-					-------------------------------------------------
-					-- DIRECT CONTACT FIRST
-					-------------------------------------------------
-
-					if CombatTarget then
-
-						if processCombatTarget(
-							CombatTarget
-						) then
-
-							return
-						end
-
-						CombatTarget =
-							nil
-					end
-
-					-------------------------------------------------
-					-- OTHERWISE CHASE
-					-------------------------------------------------
-
-					if ChaseTarget then
-
-						if processChaseTarget(
-							ChaseTarget
-						) then
-
-							return
-						end
-
-						ChaseTarget =
-							nil
-					end
-
-					-------------------------------------------------
-					-- NOTHING
-					-------------------------------------------------
-
-					stopMovement()
-				end)
-
-			if not success then
-
-				warn(
-					"[BOT ERROR]",
-					err
-				)
-			end
-
+		if not Character or not Root then
+			print("[DEBUG] Ошибка: Персонаж НЕ загружен. Завис setupCharacter!")
+		elseif not ChaseTarget and not CombatTarget then
+			print("[DEBUG] Персонаж есть, но ВРАГОВ НЕТ. Выключи TeamCheck!")
+		else
+			local target = CombatTarget or ChaseTarget
+			print("[DEBUG] Цель найдена:", target.Name, "| Идем к ней...")
 		end
-
-		task.wait(
-			CONFIG.ThinkInterval
-		)
+		task.wait(1)
 	end
 end)
 
