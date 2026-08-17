@@ -1,4 +1,4 @@
---!strict
+-- AutoBot.client.lua
 
 ---------------------------------------------------------------------
 -- SERVICES
@@ -9,14 +9,7 @@ local PathfindingService = game:GetService("PathfindingService")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 
----------------------------------------------------------------------
--- NPC
----------------------------------------------------------------------
-
-local NPC = script.Parent
-local Humanoid = NPC:WaitForChild("Humanoid") :: Humanoid
-local Root = NPC:WaitForChild("HumanoidRootPart") :: BasePart
-local Head = NPC:WaitForChild("Head") :: BasePart
+local LocalPlayer = Players.LocalPlayer
 
 ---------------------------------------------------------------------
 -- CONFIG
@@ -28,196 +21,190 @@ local CONFIG = {
 	-- AI
 	-------------------------------------------------------------
 
-	ThinkInterval = 0.05,
-	DetectionInterval = 0.05,
+	ThinkInterval = 0.03,
 
-	DetectionRadius = 500,
+	DetectionInterval = 0.03,
+
+	-- Полный поиск вокруг персонажа.
+	DetectionRadius = 600,
+
 	LostTargetTime = 4,
 
-	-------------------------------------------------------------
-	-- MOVEMENT
-	-------------------------------------------------------------
-
-	WalkSpeed = 22,
-
-	StopDistance = 30,
-
-	AgentRadius = 2,
-	AgentHeight = 5,
-	AgentCanJump = true,
-
-	RepathInterval = 0.35,
-	RepathDistance = 5,
-	WaypointReachDistance = 4,
+	TeamCheck = true,
 
 	-------------------------------------------------------------
-	-- RANDOM PATROL
+	-- AIM
 	-------------------------------------------------------------
 
-	PatrolMinDistance = 40,
-	PatrolMaxDistance = 120,
+	-- Быстрое наведение.
+	AimSpeed = 65,
 
-	PatrolTimeout = 7,
+	-- Когда врага нет, камера сама осматривает 360°.
+	ScanDegreesPerSecond = 130,
+
+	-- Стрелять только после доведения камеры.
+	FireAimTolerance = 5,
+
+	AimHead = true,
 
 	-------------------------------------------------------------
-	-- WEAPON
+	-- COMBAT
 	-------------------------------------------------------------
 
-	ShootingRange = 220,
+	AttackRange = 230,
+
+	-- На таком расстоянии перестаём бежать прямо во врага.
+	StopDistance = 28,
 
 	FireDelay = 0.10,
 
-	MagazineSize = 30,
-	ReserveAmmo = 120,
-
-	ReloadTime = 2.3,
-
 	-------------------------------------------------------------
-	-- BULLET
+	-- PATH
 	-------------------------------------------------------------
 
-	BulletSpeed = 950,
-	BulletRange = 250,
+	AgentRadius = 2,
 
-	BodyDamage = 28,
-	HeadDamage = 100,
+	AgentHeight = 5,
 
-	SpreadDegrees = 1.1,
+	AgentCanJump = true,
 
-	PreferHead = true,
-	HeadChance = 0.90,
+	RepathInterval = 0.25,
 
-	BulletSize = Vector3.new(
-		0.08,
-		0.08,
-		1
-	),
+	RepathDistance = 5,
+
+	WaypointReachDistance = 4,
+
+	-------------------------------------------------------------
+	-- PATROL
+	-------------------------------------------------------------
+
+	PatrolMinDistance = 50,
+
+	PatrolMaxDistance = 130,
+
+	PatrolTimeout = 7,
 }
 
 ---------------------------------------------------------------------
--- NETWORK / HUMANOID
+-- CHARACTER
 ---------------------------------------------------------------------
 
-Humanoid.WalkSpeed = CONFIG.WalkSpeed
-Humanoid.AutoRotate = true
+local Character = nil
+local Humanoid = nil
+local Root = nil
+local Head = nil
+
+---------------------------------------------------------------------
+-- PLAYER CONTROLS
+---------------------------------------------------------------------
+--
+-- Отключаем стандартное WASD управление, чтобы PlayerModule
+-- не перезаписывал Humanoid:Move().
+---------------------------------------------------------------------
+
+local Controls = nil
 
 pcall(function()
-	Root:SetNetworkOwner(nil)
+
+	local PlayerModule =
+		require(
+			LocalPlayer:
+				WaitForChild("PlayerScripts"):
+				WaitForChild("PlayerModule")
+		)
+
+	Controls =
+		PlayerModule:GetControls()
+
+	Controls:Disable()
+
+	print("[BOT] default controls disabled")
 end)
 
 ---------------------------------------------------------------------
--- TEAM
+-- TARGET STATE
 ---------------------------------------------------------------------
 
--- Например:
--- NPC:SetAttribute("BotTeam", "T")
+local Target = nil
 
-local BOT_TEAM =
-	NPC:GetAttribute("BotTeam")
-
-local function isEnemy(player: Player): boolean
-
-	if not BOT_TEAM then
-		return true
-	end
-
-	if player.Team
-		and player.Team.Name == BOT_TEAM then
-
-		return false
-	end
-
-	local character = player.Character
-
-	if character then
-
-		local team =
-			character:GetAttribute("Team")
-
-		if team == BOT_TEAM then
-			return false
-		end
-	end
-
-	return true
-end
-
----------------------------------------------------------------------
--- PROJECTILES
----------------------------------------------------------------------
-
-local ProjectileFolder =
-	Workspace:FindFirstChild("BotProjectiles")
-
-if not ProjectileFolder then
-
-	ProjectileFolder = Instance.new("Folder")
-	ProjectileFolder.Name = "BotProjectiles"
-	ProjectileFolder.Parent = Workspace
-end
-
-local Bullets = {}
-
----------------------------------------------------------------------
--- STATE
----------------------------------------------------------------------
-
-local Target: Player? = nil
-
-local LastSeenPosition: Vector3? = nil
+local LastSeenPosition = nil
 local LastSeenTime = 0
 
 local LastDetection = 0
 
+---------------------------------------------------------------------
+-- PATH STATE
+---------------------------------------------------------------------
+
+local CurrentPath = nil
+
 local Waypoints = {}
+
 local WaypointIndex = 1
 
-local LastPathDestination: Vector3? = nil
+local LastPathDestination = nil
+
 local LastPathTime = 0
 
-local PatrolDestination: Vector3? = nil
+---------------------------------------------------------------------
+-- PATROL
+---------------------------------------------------------------------
+
+local PatrolDestination = nil
 local PatrolCreated = 0
-
-local LastShot = 0
-
-local Magazine =
-	CONFIG.MagazineSize
-
-local ReserveAmmo =
-	CONFIG.ReserveAmmo
-
-local Reloading = false
-local ReloadFinished = 0
 
 local RNG = Random.new()
 
 ---------------------------------------------------------------------
--- RAYCAST PARAMS
+-- FIRE STATE
 ---------------------------------------------------------------------
 
-local function rayParams()
+local LastShot = 0
 
-	local params =
-		RaycastParams.new()
+---------------------------------------------------------------------
+-- CHARACTER SETUP
+---------------------------------------------------------------------
 
-	params.FilterType =
-		Enum.RaycastFilterType.Exclude
+local function setupCharacter(character)
 
-	params.FilterDescendantsInstances = {
-		NPC,
-		ProjectileFolder,
-	}
+	Character = character
 
-	params.IgnoreWater = true
+	Humanoid =
+		character:WaitForChild("Humanoid")
 
-	return params
+	Root =
+		character:WaitForChild("HumanoidRootPart")
+
+	Head =
+		character:WaitForChild("Head")
+
+	Humanoid.AutoRotate = true
+
+	-------------------------------------------------------------
+	-- WalkSpeed специально НЕ трогаем.
+	-------------------------------------------------------------
+
+	Target = nil
+
+	LastSeenPosition = nil
+
+	CurrentPath = nil
+
+	Waypoints = {}
+
+	PatrolDestination = nil
+
+	print(
+		"[BOT] character ready:",
+		character.Name
+	)
 end
 
 ---------------------------------------------------------------------
--- PLAYER CHARACTER
+-- PLAYER DATA
 ---------------------------------------------------------------------
 
-local function getPlayerCharacter(player: Player)
+local function getPlayerData(player)
 
 	local character =
 		player.Character
@@ -227,19 +214,25 @@ local function getPlayerCharacter(player: Player)
 	end
 
 	local humanoid =
-		character:FindFirstChildOfClass(
-			"Humanoid"
-		)
+		character:
+			FindFirstChildOfClass(
+				"Humanoid"
+			)
 
 	local root =
-		character:FindFirstChild(
-			"HumanoidRootPart"
-		)
+		character:
+			FindFirstChild(
+				"HumanoidRootPart"
+			)
 
 	if not humanoid
 		or not root
-		or humanoid.Health <= 0 then
+		or not root:IsA("BasePart") then
 
+		return nil
+	end
+
+	if humanoid.Health <= 0 then
 		return nil
 	end
 
@@ -249,16 +242,132 @@ local function getPlayerCharacter(player: Player)
 end
 
 ---------------------------------------------------------------------
+-- TEAM
+---------------------------------------------------------------------
+
+local function getTeamKey(player)
+
+	-------------------------------------------------------------
+	-- Roblox Teams.
+	-------------------------------------------------------------
+
+	if player.Team then
+		return "TEAM:" .. player.Team.Name
+	end
+
+	-------------------------------------------------------------
+	-- Кастомные варианты для своего place.
+	-------------------------------------------------------------
+
+	local teamAttribute =
+		player:GetAttribute("Team")
+
+	if teamAttribute ~= nil then
+
+		return "ATTR:"
+			.. tostring(teamAttribute)
+	end
+
+	local sideAttribute =
+		player:GetAttribute("Side")
+
+	if sideAttribute ~= nil then
+
+		return "SIDE:"
+			.. tostring(sideAttribute)
+	end
+
+	local character =
+		player.Character
+
+	if character then
+
+		local characterTeam =
+			character:GetAttribute("Team")
+
+		if characterTeam ~= nil then
+
+			return "CHAR:"
+				.. tostring(characterTeam)
+		end
+	end
+
+	return nil
+end
+
+local function isEnemy(player)
+
+	if player == LocalPlayer then
+		return false
+	end
+
+	if not CONFIG.TeamCheck then
+		return true
+	end
+
+	local myTeam =
+		getTeamKey(LocalPlayer)
+
+	local theirTeam =
+		getTeamKey(player)
+
+	-------------------------------------------------------------
+	-- Если обе команды известны и совпадают -> свой.
+	-------------------------------------------------------------
+
+	if myTeam
+		and theirTeam
+		and myTeam == theirTeam then
+
+		return false
+	end
+
+	return true
+end
+
+---------------------------------------------------------------------
+-- RAYCAST PARAMS
+---------------------------------------------------------------------
+
+local function getRaycastParams()
+
+	local params =
+		RaycastParams.new()
+
+	params.FilterType =
+		Enum.RaycastFilterType.Exclude
+
+	if Character then
+
+		params.FilterDescendantsInstances = {
+			Character,
+		}
+	end
+
+	params.IgnoreWater = true
+
+	return params
+end
+
+---------------------------------------------------------------------
 -- LINE OF SIGHT
 ---------------------------------------------------------------------
 
-local function canSee(character: Model): boolean
+local function canSee(character)
+
+	if not Head then
+		return false
+	end
 
 	local parts = {
-		character:FindFirstChild("Head"),
-		character:FindFirstChild(
-			"HumanoidRootPart"
-		),
+
+		character:
+			FindFirstChild("Head"),
+
+		character:
+			FindFirstChild(
+				"HumanoidRootPart"
+			),
 	}
 
 	for _, part in ipairs(parts) do
@@ -272,11 +381,14 @@ local function canSee(character: Model): boolean
 		local origin =
 			Head.Position
 
+		local direction =
+			part.Position - origin
+
 		local result =
 			Workspace:Raycast(
 				origin,
-				part.Position - origin,
-				rayParams()
+				direction,
+				getRaycastParams()
 			)
 
 		if result
@@ -291,17 +403,28 @@ local function canSee(character: Model): boolean
 end
 
 ---------------------------------------------------------------------
--- 360 TARGET SEARCH
+-- FIND TARGET - 360°
 ---------------------------------------------------------------------
 
-local function findTarget(): Player?
+local function findTarget()
 
-	local best: Player? = nil
-	local bestDistance = math.huge
+	if not Root then
+		return nil
+	end
 
-	for _, player in ipairs(
-		Players:GetPlayers()
-	) do
+	local bestPlayer = nil
+
+	local bestDistance =
+		math.huge
+
+	for _, player
+		in ipairs(
+			Players:GetPlayers()
+		) do
+
+		---------------------------------------------------------
+		-- Сразу исключаем тиммейтов.
+		---------------------------------------------------------
 
 		if not isEnemy(player) then
 			continue
@@ -310,7 +433,7 @@ local function findTarget(): Player?
 		local character,
 			_,
 			targetRoot =
-			getPlayerCharacter(player)
+			getPlayerData(player)
 
 		if not character then
 			continue
@@ -328,43 +451,211 @@ local function findTarget(): Player?
 			continue
 		end
 
-		if distance >= bestDistance then
+		if distance
+			>= bestDistance then
+
 			continue
 		end
+
+		---------------------------------------------------------
+		-- Не берём цель сквозь стену.
+		---------------------------------------------------------
 
 		if not canSee(character) then
 			continue
 		end
 
-		best = player
-		bestDistance = distance
+		bestPlayer =
+			player
+
+		bestDistance =
+			distance
 	end
 
-	return best
+	return bestPlayer
 end
 
 ---------------------------------------------------------------------
--- PATHFINDING
+-- TARGET AIM PART
+---------------------------------------------------------------------
+
+local function getAimPosition(
+	character,
+	root
+)
+
+	if CONFIG.AimHead then
+
+		local targetHead =
+			character:
+				FindFirstChild("Head")
+
+		if targetHead
+			and targetHead:IsA("BasePart") then
+
+			return targetHead.Position
+		end
+	end
+
+	return root.Position
+end
+
+---------------------------------------------------------------------
+-- CAMERA ANGLE
+---------------------------------------------------------------------
+
+local function cameraAngleTo(
+	position
+)
+
+	local camera =
+		Workspace.CurrentCamera
+
+	if not camera then
+		return math.huge
+	end
+
+	local difference =
+		position
+		- camera.CFrame.Position
+
+	if difference.Magnitude
+		<= 0.001 then
+
+		return 0
+	end
+
+	local direction =
+		difference.Unit
+
+	local dot =
+		math.clamp(
+
+			camera.CFrame.LookVector:
+				Dot(direction),
+
+			-1,
+			1
+		)
+
+	return math.deg(
+		math.acos(dot)
+	)
+end
+
+---------------------------------------------------------------------
+-- CAMERA
+---------------------------------------------------------------------
+
+RunService:BindToRenderStep(
+
+	"AutoBotCamera",
+
+	Enum.RenderPriority.Camera.Value + 1,
+
+	function(dt)
+
+		local camera =
+			Workspace.CurrentCamera
+
+		if not camera then
+			return
+		end
+
+		---------------------------------------------------------
+		-- TARGET AIM
+		---------------------------------------------------------
+
+		if Target then
+
+			local character,
+				_,
+				targetRoot =
+				getPlayerData(Target)
+
+			if character
+				and targetRoot
+				and isEnemy(Target)
+				and canSee(character) then
+
+				local aimPosition =
+					getAimPosition(
+						character,
+						targetRoot
+					)
+
+				local current =
+					camera.CFrame
+
+				local wanted =
+					CFrame.lookAt(
+						current.Position,
+						aimPosition
+					)
+
+				local alpha =
+					1
+					- math.exp(
+						-CONFIG.AimSpeed
+						* dt
+					)
+
+				camera.CFrame =
+					current:Lerp(
+						wanted,
+						alpha
+					)
+
+				return
+			end
+		end
+
+		---------------------------------------------------------
+		-- NO TARGET -> 360 SCAN
+		---------------------------------------------------------
+
+		local amount =
+			math.rad(
+				CONFIG.ScanDegreesPerSecond
+			) * dt
+
+		camera.CFrame =
+			camera.CFrame
+			* CFrame.Angles(
+				0,
+				amount,
+				0
+			)
+	end
+)
+
+---------------------------------------------------------------------
+-- COMPUTE PATH
 ---------------------------------------------------------------------
 
 local function computePath(
-	destination: Vector3
-): boolean
+	destination
+)
+
+	if not Root then
+		return false
+	end
 
 	local path =
-		PathfindingService:CreatePath({
+		PathfindingService:
+			CreatePath({
 
-			AgentRadius =
-				CONFIG.AgentRadius,
+				AgentRadius =
+					CONFIG.AgentRadius,
 
-			AgentHeight =
-				CONFIG.AgentHeight,
+				AgentHeight =
+					CONFIG.AgentHeight,
 
-			AgentCanJump =
-				CONFIG.AgentCanJump,
-		})
+				AgentCanJump =
+					CONFIG.AgentCanJump,
+			})
 
-	local ok =
+	local success, errorMessage =
 		pcall(function()
 
 			path:ComputeAsync(
@@ -373,14 +664,32 @@ local function computePath(
 			)
 		end)
 
-	if not ok
-		or path.Status
-			~= Enum.PathStatus.Success then
+	if not success then
+
+		warn(
+			"[BOT] path error:",
+			errorMessage
+		)
+
+		CurrentPath = nil
 
 		Waypoints = {}
 
 		return false
 	end
+
+	if path.Status
+		~= Enum.PathStatus.Success then
+
+		CurrentPath = nil
+
+		Waypoints = {}
+
+		return false
+	end
+
+	CurrentPath =
+		path
 
 	Waypoints =
 		path:GetWaypoints()
@@ -400,36 +709,55 @@ local function computePath(
 end
 
 ---------------------------------------------------------------------
--- REPATH
+-- NEED REPATH
 ---------------------------------------------------------------------
 
 local function needsRepath(
-	destination: Vector3,
-	movingTarget: boolean
+	destination
 )
 
 	if #Waypoints == 0 then
 		return true
 	end
 
-	if movingTarget
-		and os.clock() - LastPathTime
-			>= CONFIG.RepathInterval then
+	if os.clock()
+		- LastPathTime
+		>= CONFIG.RepathInterval then
 
 		return true
 	end
 
-	if LastPathDestination
-		and (
-			destination
-			- LastPathDestination
-		).Magnitude
+	if LastPathDestination then
+
+		local moved =
+			(
+				destination
+				- LastPathDestination
+			).Magnitude
+
+		if moved
 			>= CONFIG.RepathDistance then
 
-		return true
+			return true
+		end
 	end
 
 	return false
+end
+
+---------------------------------------------------------------------
+-- STOP
+---------------------------------------------------------------------
+
+local function stopMovement()
+
+	if Humanoid then
+
+		Humanoid:Move(
+			Vector3.zero,
+			false
+		)
+	end
 end
 
 ---------------------------------------------------------------------
@@ -438,19 +766,40 @@ end
 
 local function followPath()
 
+	if not Root
+		or not Humanoid then
+
+		return false
+	end
+
 	local waypoint =
 		Waypoints[
 			WaypointIndex
 		]
 
 	if not waypoint then
+
+		stopMovement()
+
 		return false
 	end
 
-	if (
-		Root.Position
-		- waypoint.Position
-	).Magnitude
+	local difference =
+		waypoint.Position
+		- Root.Position
+
+	local flatDifference =
+		Vector3.new(
+			difference.X,
+			0,
+			difference.Z
+		)
+
+	-------------------------------------------------------------
+	-- Waypoint reached.
+	-------------------------------------------------------------
+
+	if flatDifference.Magnitude
 		<= CONFIG.WaypointReachDistance then
 
 		WaypointIndex += 1
@@ -461,43 +810,111 @@ local function followPath()
 			]
 
 		if not waypoint then
+
+			stopMovement()
+
 			return false
 		end
+
+		difference =
+			waypoint.Position
+			- Root.Position
+
+		flatDifference =
+			Vector3.new(
+				difference.X,
+				0,
+				difference.Z
+			)
 	end
+
+	-------------------------------------------------------------
+	-- Jump waypoint.
+	-------------------------------------------------------------
 
 	if waypoint.Action
 		== Enum.PathWaypointAction.Jump then
 
-		Humanoid.Jump = true
+		Humanoid.Jump =
+			true
 	end
 
-	Humanoid.AutoRotate = true
+	-------------------------------------------------------------
+	-- ВАЖНО:
+	--
+	-- Здесь теперь не Humanoid:MoveTo(),
+	-- а постоянный Humanoid:Move().
+	--
+	-- Для LocalPlayer это обычно стабильнее.
+	-------------------------------------------------------------
 
-	Humanoid:MoveTo(
-		waypoint.Position
-	)
+	if flatDifference.Magnitude
+		> 0.01 then
 
-	return true
+		Humanoid.AutoRotate =
+			true
+
+		Humanoid:Move(
+			flatDifference.Unit,
+			false
+		)
+
+		return true
+	end
+
+	stopMovement()
+
+	return false
 end
 
 ---------------------------------------------------------------------
--- MOVE
+-- MOVE TO
 ---------------------------------------------------------------------
 
 local function moveTo(
-	destination: Vector3,
-	movingTarget: boolean
+	destination
 )
 
+	if not Humanoid
+		or not Root then
+
+		return
+	end
+
 	if needsRepath(
-		destination,
-		movingTarget
+		destination
 	) then
 
-		if not computePath(destination) then
+		local pathFound =
+			computePath(
+				destination
+			)
 
-			-- fallback
-			Humanoid:MoveTo(destination)
+		---------------------------------------------------------
+		-- Если Pathfinding не смог,
+		-- идём напрямую.
+		---------------------------------------------------------
+
+		if not pathFound then
+
+			local difference =
+				destination
+				- Root.Position
+
+			local flat =
+				Vector3.new(
+					difference.X,
+					0,
+					difference.Z
+				)
+
+			if flat.Magnitude > 0.1 then
+
+				Humanoid:Move(
+					flat.Unit,
+					false
+				)
+			end
 
 			return
 		end
@@ -507,12 +924,16 @@ local function moveTo(
 end
 
 ---------------------------------------------------------------------
--- RANDOM PATROL POSITION
+-- RANDOM PATROL DESTINATION
 ---------------------------------------------------------------------
 
-local function makePatrolDestination(): Vector3?
+local function createPatrolDestination()
 
-	for _ = 1, 12 do
+	if not Root then
+		return nil
+	end
+
+	for _ = 1, 15 do
 
 		local angle =
 			RNG:NextNumber(
@@ -539,39 +960,37 @@ local function makePatrolDestination(): Vector3?
 					* distance
 			)
 
+		---------------------------------------------------------
+		-- Ищем землю.
+		---------------------------------------------------------
+
 		local result =
 			Workspace:Raycast(
 
 				candidate
 					+ Vector3.new(
 						0,
-						100,
+						120,
 						0
 					),
 
 				Vector3.new(
 					0,
-					-250,
+					-300,
 					0
 				),
 
-				rayParams()
+				getRaycastParams()
 			)
 
-		if not result then
-			continue
-		end
+		if result then
 
-		local destination =
-			result.Position
-			+ Vector3.new(
-				0,
-				2,
-				0
-			)
-
-		if computePath(destination) then
-			return destination
+			return result.Position
+				+ Vector3.new(
+					0,
+					2,
+					0
+				)
 		end
 	end
 
@@ -584,33 +1003,47 @@ end
 
 local function patrol()
 
-	local needsNew =
+	if not Root then
+		return
+	end
+
+	local needNew =
 		PatrolDestination == nil
+
+	-------------------------------------------------------------
+	-- Дошли до точки.
+	-------------------------------------------------------------
 
 	if PatrolDestination
 		and (
 			Root.Position
 			- PatrolDestination
-		).Magnitude <= 6 then
+		).Magnitude <= 7 then
 
-		needsNew = true
+		needNew = true
 	end
+
+	-------------------------------------------------------------
+	-- Застряли.
+	-------------------------------------------------------------
 
 	if PatrolDestination
 		and os.clock()
 			- PatrolCreated
 			>= CONFIG.PatrolTimeout then
 
-		needsNew = true
+		needNew = true
 	end
 
-	if needsNew then
+	if needNew then
 
 		PatrolDestination =
-			makePatrolDestination()
+			createPatrolDestination()
 
 		PatrolCreated =
 			os.clock()
+
+		CurrentPath = nil
 
 		Waypoints = {}
 	end
@@ -618,404 +1051,90 @@ local function patrol()
 	if PatrolDestination then
 
 		moveTo(
-			PatrolDestination,
-			false
+			PatrolDestination
 		)
 	end
 end
 
 ---------------------------------------------------------------------
--- AIM POSITION
+-- GET TOOL
 ---------------------------------------------------------------------
 
-local function getAimPosition(
-	character: Model,
-	targetRoot: BasePart
-): Vector3
+local function getEquippedTool()
 
-	local part: BasePart =
-		targetRoot
-
-	local head =
-		character:FindFirstChild("Head")
-
-	if CONFIG.PreferHead
-		and head
-		and head:IsA("BasePart")
-		and RNG:NextNumber()
-			<= CONFIG.HeadChance then
-
-		part = head
+	if not Character then
+		return nil
 	end
 
-	return part.Position
+	return Character:
+		FindFirstChildOfClass(
+			"Tool"
+		)
 end
 
 ---------------------------------------------------------------------
--- SPREAD
+-- EQUIP TOOL
 ---------------------------------------------------------------------
 
-local function applySpread(
-	direction: Vector3
-): Vector3
+local function equipTool()
 
-	local spread =
-		math.rad(
-			CONFIG.SpreadDegrees
-		)
+	if not Character
+		or not Humanoid then
 
-	if spread <= 0 then
-		return direction.Unit
+		return nil
 	end
 
-	local yaw =
-		RNG:NextNumber(
-			-spread,
-			spread
-		)
+	local alreadyEquipped =
+		getEquippedTool()
 
-	local pitch =
-		RNG:NextNumber(
-			-spread,
-			spread
-		)
-
-	local base =
-		CFrame.lookAt(
-			Vector3.zero,
-			direction.Unit
-		)
-
-	return (
-		base
-		* CFrame.Angles(
-			pitch,
-			yaw,
-			0
-		)
-	).LookVector
-end
-
----------------------------------------------------------------------
--- FIND HUMANOID
----------------------------------------------------------------------
-
-local function humanoidFromHit(
-	instance: Instance
-)
-
-	local current: Instance? =
-		instance
-
-	while current
-		and current ~= Workspace do
-
-		if current:IsA("Model") then
-
-			local humanoid =
-				current:
-					FindFirstChildOfClass(
-						"Humanoid"
-					)
-
-			if humanoid then
-				return humanoid, current
-			end
-		end
-
-		current = current.Parent
+	if alreadyEquipped then
+		return alreadyEquipped
 	end
 
-	return nil
-end
+	local backpack =
+		LocalPlayer:
+			FindFirstChildOfClass(
+				"Backpack"
+			)
 
----------------------------------------------------------------------
--- FRIENDLY CHARACTER
----------------------------------------------------------------------
-
-local function friendlyCharacter(
-	character: Model
-): boolean
-
-	local player =
-		Players:GetPlayerFromCharacter(
-			character
-		)
-
-	if not player then
-		return false
+	if not backpack then
+		return nil
 	end
 
-	return not isEnemy(player)
-end
+	local tool =
+		backpack:
+			FindFirstChildOfClass(
+				"Tool"
+			)
 
----------------------------------------------------------------------
--- BULLET HIT
----------------------------------------------------------------------
-
-local function bulletHit(
-	result: RaycastResult
-)
-
-	local humanoid,
-		character =
-		humanoidFromHit(
-			result.Instance
-		)
-
-	if not humanoid
-		or not character then
-
-		-- wall / floor
-		return
+	if not tool then
+		return nil
 	end
 
-	if character == NPC then
-		return
-	end
-
-	if friendlyCharacter(
-		character
-	) then
-
-		return
-	end
-
-	if humanoid.Health <= 0 then
-		return
-	end
-
-	local damage =
-		CONFIG.BodyDamage
-
-	if result.Instance.Name
-		== "Head" then
-
-		damage =
-			CONFIG.HeadDamage
-	end
-
-	-------------------------------------------------------------
-	-- Урон ТОЛЬКО после фактического попадания.
-	-------------------------------------------------------------
-
-	humanoid:TakeDamage(
-		damage
+	Humanoid:EquipTool(
+		tool
 	)
+
+	return tool
 end
 
 ---------------------------------------------------------------------
--- SPAWN BULLET
+-- FIRE WEAPON
+---------------------------------------------------------------------
+--
+-- В этом клиентском варианте больше НЕТ:
+--
+-- BotBullet
+-- TakeDamage
+-- fake magazine
+-- fake projectile physics
+--
+-- Нажимаем штатный Tool.
 ---------------------------------------------------------------------
 
-local function spawnBullet(
-	origin: Vector3,
-	direction: Vector3
+local function fireWeapon(
+	targetPosition
 )
-
-	local part =
-		Instance.new("Part")
-
-	part.Name = "BotBullet"
-
-	part.Anchored = true
-	part.CanCollide = false
-	part.CanTouch = false
-	part.CanQuery = false
-
-	part.CastShadow = false
-
-	part.Material =
-		Enum.Material.Neon
-
-	part.Size =
-		CONFIG.BulletSize
-
-	part.CFrame =
-		CFrame.lookAt(
-			origin,
-			origin + direction
-		)
-
-	part.Parent =
-		ProjectileFolder
-
-	table.insert(
-		Bullets,
-		{
-			Part = part,
-
-			Position = origin,
-
-			Velocity =
-				direction.Unit
-				* CONFIG.BulletSpeed,
-
-			Distance = 0,
-
-			Params =
-				rayParams(),
-		}
-	)
-end
-
----------------------------------------------------------------------
--- BULLET SIMULATION
----------------------------------------------------------------------
-
-RunService.Heartbeat:
-	Connect(function(dt)
-
-		for index = #Bullets, 1, -1 do
-
-			local bullet =
-				Bullets[index]
-
-			local part =
-				bullet.Part
-
-			if not part.Parent then
-
-				table.remove(
-					Bullets,
-					index
-				)
-
-				continue
-			end
-
-			local movement =
-				bullet.Velocity
-				* dt
-
-			---------------------------------------------------------
-			-- Каждый кадр raycast между старой и новой позицией.
-			---------------------------------------------------------
-
-			local result =
-				Workspace:Raycast(
-
-					bullet.Position,
-
-					movement,
-
-					bullet.Params
-				)
-
-			if result then
-
-				part.Position =
-					result.Position
-
-				bulletHit(
-					result
-				)
-
-				part:Destroy()
-
-				table.remove(
-					Bullets,
-					index
-				)
-
-				continue
-			end
-
-			bullet.Position +=
-				movement
-
-			bullet.Distance +=
-				movement.Magnitude
-
-			if bullet.Distance
-				>= CONFIG.BulletRange then
-
-				part:Destroy()
-
-				table.remove(
-					Bullets,
-					index
-				)
-
-				continue
-			end
-
-			part.CFrame =
-				CFrame.lookAt(
-
-					bullet.Position,
-
-					bullet.Position
-						+ bullet.Velocity.Unit
-				)
-		end
-	end)
-
----------------------------------------------------------------------
--- RELOAD
----------------------------------------------------------------------
-
-local function startReload()
-
-	if Reloading
-		or ReserveAmmo <= 0 then
-
-		return
-	end
-
-	Reloading = true
-
-	ReloadFinished =
-		os.clock()
-		+ CONFIG.ReloadTime
-end
-
-local function updateReload()
-
-	if not Reloading then
-		return
-	end
-
-	if os.clock()
-		< ReloadFinished then
-
-		return
-	end
-
-	local missing =
-		CONFIG.MagazineSize
-		- Magazine
-
-	local amount =
-		math.min(
-			missing,
-			ReserveAmmo
-		)
-
-	Magazine += amount
-	ReserveAmmo -= amount
-
-	Reloading = false
-end
-
----------------------------------------------------------------------
--- SHOOT
----------------------------------------------------------------------
-
-local function shoot(
-	targetPosition: Vector3
-)
-
-	if Reloading then
-		return
-	end
-
-	if Magazine <= 0 then
-
-		startReload()
-
-		return
-	end
 
 	if os.clock() - LastShot
 		< CONFIG.FireDelay then
@@ -1023,33 +1142,74 @@ local function shoot(
 		return
 	end
 
-	local origin =
-		Head.Position
-		+ Head.CFrame.LookVector
-			* 1.2
+	-------------------------------------------------------------
+	-- Ещё не довелись до цели.
+	-------------------------------------------------------------
 
-	local direction =
-		targetPosition - origin
+	if cameraAngleTo(
+		targetPosition
+	) > CONFIG.FireAimTolerance then
 
-	if direction.Magnitude
-		> CONFIG.BulletRange then
+		return
+	end
 
+	local tool =
+		getEquippedTool()
+		or equipTool()
+
+	if not tool then
+
+		warn(
+			"[BOT] no weapon/tool"
+		)
+
+		return
+	end
+
+	if not tool.Enabled then
 		return
 	end
 
 	LastShot =
 		os.clock()
 
-	Magazine -= 1
+	-------------------------------------------------------------
+	-- Один короткий trigger pulse.
+	-------------------------------------------------------------
 
-	spawnBullet(
-		origin,
-		applySpread(direction)
+	tool:Activate()
+
+	task.delay(
+		0.025,
+
+		function()
+
+			if tool
+				and tool.Parent then
+
+				pcall(function()
+
+					tool:Deactivate()
+
+				end)
+			end
+		end
 	)
+end
 
-	if Magazine <= 0 then
-		startReload()
-	end
+---------------------------------------------------------------------
+-- CLEAR TARGET
+---------------------------------------------------------------------
+
+local function clearTarget()
+
+	Target = nil
+
+	LastSeenPosition = nil
+
+	CurrentPath = nil
+
+	Waypoints = {}
 end
 
 ---------------------------------------------------------------------
@@ -1057,12 +1217,22 @@ end
 ---------------------------------------------------------------------
 
 local function processTarget(
-	player: Player
-): boolean
+	player
+)
+
+	if not Root
+		or not Humanoid then
+
+		return false
+	end
+
+	-------------------------------------------------------------
+	-- Проверяем team каждый раз.
+	-------------------------------------------------------------
 
 	if not isEnemy(player) then
 
-		Target = nil
+		clearTarget()
 
 		return false
 	end
@@ -1070,11 +1240,11 @@ local function processTarget(
 	local character,
 		_,
 		targetRoot =
-		getPlayerCharacter(player)
+		getPlayerData(player)
 
 	if not character then
 
-		Target = nil
+		clearTarget()
 
 		return false
 	end
@@ -1086,7 +1256,7 @@ local function processTarget(
 		).Magnitude
 
 	-------------------------------------------------------------
-	-- VISIBLE
+	-- TARGET VISIBLE.
 	-------------------------------------------------------------
 
 	if canSee(character) then
@@ -1097,57 +1267,45 @@ local function processTarget(
 		LastSeenTime =
 			os.clock()
 
-		local aim =
+		local aimPosition =
 			getAimPosition(
 				character,
 				targetRoot
 			)
 
 		---------------------------------------------------------
-		-- FAR
-		---------------------------------------------------------
-
-		if distance
-			> CONFIG.ShootingRange then
-
-			moveTo(
-				targetRoot.Position,
-				true
-			)
-
-			return true
-		end
-
-		---------------------------------------------------------
-		-- COMBAT MOVEMENT
+		-- RUN TOWARDS TARGET.
 		---------------------------------------------------------
 
 		if distance
 			> CONFIG.StopDistance then
 
 			moveTo(
-				targetRoot.Position,
-				true
+				targetRoot.Position
 			)
 
 		else
 
-			Humanoid:MoveTo(
-				Root.Position
-			)
+			stopMovement()
 		end
 
 		---------------------------------------------------------
-		-- FIRE
+		-- FIRE.
 		---------------------------------------------------------
 
-		shoot(aim)
+		if distance
+			<= CONFIG.AttackRange then
+
+			fireWeapon(
+				aimPosition
+			)
+		end
 
 		return true
 	end
 
 	-------------------------------------------------------------
-	-- LOST TARGET
+	-- LOST TARGET.
 	-------------------------------------------------------------
 
 	if LastSeenPosition
@@ -1156,25 +1314,25 @@ local function processTarget(
 			<= CONFIG.LostTargetTime then
 
 		moveTo(
-			LastSeenPosition,
-			false
+			LastSeenPosition
 		)
 
 		return true
 	end
 
-	Target = nil
+	clearTarget()
 
 	return false
 end
 
 ---------------------------------------------------------------------
--- DETECTION
+-- UPDATE DETECTION
 ---------------------------------------------------------------------
 
 local function updateDetection()
 
-	if os.clock() - LastDetection
+	if os.clock()
+		- LastDetection
 		< CONFIG.DetectionInterval then
 
 		return
@@ -1184,14 +1342,14 @@ local function updateDetection()
 		os.clock()
 
 	-------------------------------------------------------------
-	-- Сначала валидируем текущую.
+	-- Validate current target.
 	-------------------------------------------------------------
 
 	if Target then
 
 		local character,
 			humanoid =
-			getPlayerCharacter(Target)
+			getPlayerData(Target)
 
 		if character
 			and humanoid
@@ -1202,41 +1360,92 @@ local function updateDetection()
 		end
 	end
 
+	-------------------------------------------------------------
+	-- Search all around us.
+	-------------------------------------------------------------
+
 	Target =
 		findTarget()
 end
 
 ---------------------------------------------------------------------
--- MAIN LOOP
+-- CHARACTER RESPAWN
+---------------------------------------------------------------------
+
+LocalPlayer.CharacterAdded:
+	Connect(function(character)
+
+		task.wait(0.25)
+
+		setupCharacter(
+			character
+		)
+	end)
+
+if LocalPlayer.Character then
+
+	task.spawn(
+		setupCharacter,
+		LocalPlayer.Character
+	)
+end
+
+---------------------------------------------------------------------
+-- MAIN AI LOOP
 ---------------------------------------------------------------------
 
 task.spawn(function()
 
-	while NPC.Parent
-		and Humanoid.Health > 0 do
+	while true do
 
-		updateReload()
+		if Character
+			and Character.Parent
+			and Humanoid
+			and Root
+			and Humanoid.Health > 0 then
 
-		updateDetection()
+			local success, err =
+				pcall(function()
 
-		if Target then
+					-------------------------------------------------
+					-- Быстрый 360° detection.
+					-------------------------------------------------
 
-			if processTarget(Target) then
+					updateDetection()
 
-				task.wait(
-					CONFIG.ThinkInterval
+					-------------------------------------------------
+					-- Combat.
+					-------------------------------------------------
+
+					if Target then
+
+						if processTarget(
+							Target
+						) then
+
+							return
+						end
+					end
+
+					-------------------------------------------------
+					-- No enemy -> patrol.
+					-------------------------------------------------
+
+					patrol()
+				end)
+
+			if not success then
+
+				warn(
+					"[BOT ERROR]",
+					err
 				)
-
-				continue
 			end
+
+		else
+
+			stopMovement()
 		end
-
-		---------------------------------------------------------
-		-- Ни одного врага:
-		-- сам гуляет по карте.
-		---------------------------------------------------------
-
-		patrol()
 
 		task.wait(
 			CONFIG.ThinkInterval
@@ -1244,4 +1453,4 @@ task.spawn(function()
 	end
 end)
 
-print("[AutoBot] running")
+print("[AutoBot] CLIENT BOT RUNNING")
